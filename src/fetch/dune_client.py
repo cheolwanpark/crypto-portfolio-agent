@@ -10,6 +10,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from dune_client.client import DuneClient as OfficialDuneClient
+from dune_client.query import QueryBase
 from loguru import logger
 
 from src.config import settings
@@ -67,11 +68,10 @@ class DuneClient:
         self, max_age_hours: int = 24, max_retries: int = 3
     ) -> list[DuneLendingData]:
         """
-        Fetch lending market data from Dune Analytics.
+        Fetch lending market data from Dune Analytics by executing the query.
 
         Args:
-            max_age_hours: Maximum age of cached results (hours). Dune will re-run
-                          the query if cached results are older than this.
+            max_age_hours: Unused parameter (kept for API compatibility).
             max_retries: Maximum number of retry attempts on failure.
 
         Returns:
@@ -85,21 +85,24 @@ class DuneClient:
         for attempt in range(max_retries):
             try:
                 logger.info(
-                    f"Fetching Dune query {query_id} "
-                    f"(attempt {attempt + 1}/{max_retries}, max_age={max_age_hours}h)"
+                    f"Executing Dune query {query_id} "
+                    f"(attempt {attempt + 1}/{max_retries})"
                 )
 
                 # Apply rate limiting
                 await self._rate_limit()
 
-                # Fetch latest results from Dune (runs in thread pool to avoid blocking)
+                # Create query object and execute it
+                query = QueryBase(
+                    name="Lending Data Query",
+                    query_id=query_id,
+                )
+
+                # Execute query (runs in thread pool to avoid blocking)
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(
                     None,
-                    lambda: self.client.get_latest_result(
-                        query_id=query_id,
-                        max_age_hours=max_age_hours,
-                    )
+                    lambda: self.client.run_query(query)
                 )
 
                 if not result or not result.result:

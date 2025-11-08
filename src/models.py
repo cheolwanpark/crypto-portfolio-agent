@@ -406,12 +406,18 @@ class DuneLendingData(BaseModel):
         Convert to dictionary for database insertion.
 
         Transforms Dune decimal rates to RAY format (10^27 precision).
+        Ensures timestamp is timezone-aware (UTC).
 
         Returns:
             Dict with all lending data fields ready for database
         """
+        # Ensure timestamp is timezone-aware
+        timestamp = self.dt
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+
         return {
-            "timestamp": self.dt,
+            "timestamp": timestamp,
             "asset": self.symbol,
             "reserve_address": self.reserve,
             "supply_rate_ray": decimal_to_ray(self.avg_supplyRate),
