@@ -645,7 +645,9 @@ async def get_lending(
     asset: str,
     start: Annotated[datetime | None, Query(description="Start timestamp (UTC)")] = None,
     end: Annotated[datetime | None, Query(description="End timestamp (UTC)")] = None,
-    limit: Annotated[int | None, Query(description="Maximum number of records to return", ge=1, le=1000)] = 100,
+    limit: Annotated[
+        int | None, Query(description="Maximum number of records to return", ge=1, le=1000)
+    ] = 100,
 ) -> LendingResponse:
     """
     Get lending data for an asset.
@@ -674,7 +676,9 @@ async def get_lending(
         aave_asset = settings.lending_asset_symbol_map[asset_upper]
     else:
         # Build user-friendly error message showing both mapped and native symbols
-        mapped_symbols = [f"{k}→{v}" for k, v in settings.lending_asset_symbol_map.items() if k != v]
+        mapped_symbols = [
+            f"{k}→{v}" for k, v in settings.lending_asset_symbol_map.items() if k != v
+        ]
         available_symbols = ", ".join(mapped_symbols + list(settings.lending_assets_list))
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

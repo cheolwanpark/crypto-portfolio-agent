@@ -112,7 +112,7 @@ class SchedulerService:
                 logger.info("No gaps detected")
 
             logger.info("=" * 60)
-            logger.info(f"Scheduled fetch job completed successfully")
+            logger.info("Scheduled fetch job completed successfully")
             logger.info("=" * 60)
 
         except Exception as e:
@@ -160,7 +160,7 @@ class SchedulerService:
                 logger.info("No futures gaps detected")
 
             logger.info("=" * 60)
-            logger.info(f"Scheduled futures fetch job completed successfully")
+            logger.info("Scheduled futures fetch job completed successfully")
             logger.info("=" * 60)
 
         except Exception as e:
@@ -196,7 +196,7 @@ class SchedulerService:
             logger.info(f"Total new lending events fetched: {total_new}")
 
             logger.info("=" * 60)
-            logger.info(f"Scheduled lending fetch job completed successfully")
+            logger.info("Scheduled lending fetch job completed successfully")
             logger.info("=" * 60)
 
         except Exception as e:
