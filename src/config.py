@@ -103,7 +103,9 @@ class Settings(BaseSettings):
     )
     aave_v3_graphql_url: str = Field(
         default="https://api.thegraph.com/subgraphs/name/aave/protocol-v3",
-        description="Aave V3 GraphQL API endpoint (The Graph hosted service)",
+        description="Aave V3 GraphQL API endpoint. NOTE: The Graph hosted service "
+        "was deprecated March 2024. New official API available at "
+        "https://api.v3.aave.com/graphql (requires schema validation before migration)",
     )
 
     @property
