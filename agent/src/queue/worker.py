@@ -133,4 +133,20 @@ def process_chat_request(
 
     finally:
         # Clean up HTTP client
-        asyncio.run(httpx_client.aclose())
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Schedule cleanup on the running loop
+                loop.create_task(httpx_client.aclose())
+            else:
+                # Loop is not running, safe to use asyncio.run
+                asyncio.run(httpx_client.aclose())
+        except RuntimeError:
+            # Event loop is closed, create a new one for cleanup
+            try:
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                new_loop.run_until_complete(httpx_client.aclose())
+                new_loop.close()
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to close httpx client: {cleanup_error}")

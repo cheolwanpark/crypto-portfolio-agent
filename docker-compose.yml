@@ -89,7 +89,7 @@ services:
       - QUEUE_NAME=chat-agent
       - MAX_WORKERS=10
       - AGENT_MAX_TURNS=15
-      - AGENT_TIMEOUT_SECONDS=60
+      - AGENT_TIMEOUT_SECONDS=${AGENT_TIMEOUT_SECONDS:-600}
       - AGENT_MAX_TOOL_CALLS=30
       - LOG_LEVEL=INFO
     depends_on:
@@ -113,7 +113,7 @@ services:
       - QUEUE_NAME=chat-agent
       - MAX_WORKERS=10
       - AGENT_MAX_TURNS=15
-      - AGENT_TIMEOUT_SECONDS=60
+      - AGENT_TIMEOUT_SECONDS=${AGENT_TIMEOUT_SECONDS:-600}
       - AGENT_MAX_TOOL_CALLS=30
       - LOG_LEVEL=INFO
     depends_on:

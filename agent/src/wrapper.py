@@ -353,7 +353,7 @@ class Agent:
         mcp_servers: Optional[MCPConfig] = None,
         allowed_tools: Optional[Sequence[str]] = None,
         system_prompt: Optional[str] = None,
-        model: Optional[str] = None,
+        model: Optional[str] = "claude-haiku-4-5-20251001",
         oauth_token: Optional[str] = None,
     ) -> None:
         option_kwargs: MutableMapping[str, Any] = {}
