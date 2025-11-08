@@ -59,6 +59,12 @@ from src.models import (
     # Risk analysis models
     RiskProfileRequest,
     RiskProfileResponse,
+    # Aggregated statistics models
+    AggregatedSpotStats,
+    AggregatedFuturesStats,
+    AggregatedLendingStats,
+    AggregatedStatsResponse,
+    MultiAssetAggregatedStatsResponse,
 )
 
 router = APIRouter()
@@ -752,6 +758,338 @@ async def get_lending(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to query lending data: {str(e)}",
+        )
+
+
+# ==================== Aggregated Statistics Endpoints ====================
+
+
+@router.get("/aggregated-stats/multi", response_model=MultiAssetAggregatedStatsResponse)
+async def get_aggregated_stats_multi(
+    assets: Annotated[str, Query(description="Comma-separated asset list (e.g., BTC,ETH,SOL)")],
+    start: Annotated[datetime, Query(description="Start timestamp (ISO 8601, UTC)")],
+    end: Annotated[datetime, Query(description="End timestamp (ISO 8601, UTC)")],
+    data_types: Annotated[
+        str, Query(description="Comma-separated data types: spot, futures, lending")
+    ] = "spot,futures,lending",
+) -> MultiAssetAggregatedStatsResponse:
+    """
+    Get pre-aggregated statistics for multiple assets with cross-asset correlations.
+
+    Returns calculated metrics from existing database records (no new data fetching).
+    Includes correlation matrix for multi-asset portfolio analysis.
+
+    **Query Parameters:**
+    - `assets`: Comma-separated asset list (e.g., "BTC,ETH,SOL"), max 10 assets
+    - `start`, `end`: ISO 8601 datetime (UTC), max range 90 days
+    - `data_types`: Comma-separated list of "spot", "futures", "lending" (optional, default: all)
+
+    **Response:**
+    - Per-asset statistics in `data` field: `{asset: {spot, futures, lending}}`
+    - Cross-asset correlation matrix in `correlations` field (requires ≥2 assets with spot data)
+    - Unavailable data types return `null` per asset
+
+    **Correlation Matrix:**
+    - Time-aligned using inner join (only overlapping periods)
+    - Calculated from daily returns
+    - Returns `null` if insufficient overlapping data
+
+    **Examples:**
+    - `/aggregated-stats/multi?assets=BTC,ETH,SOL&start=2025-01-01T00:00:00Z&end=2025-02-01T00:00:00Z`
+    - `/aggregated-stats/multi?assets=BTC,ETH&start=2025-01-15T00:00:00Z&end=2025-02-15T00:00:00Z&data_types=spot`
+    """
+    from src.analysis.aggregated_stats import (
+        calculate_cross_asset_correlations,
+        calculate_futures_stats,
+        calculate_lending_stats,
+        calculate_spot_stats,
+    )
+
+    # Parse and validate assets
+    asset_list = [a.strip().upper() for a in assets.split(",")]
+    asset_list = list(dict.fromkeys(asset_list))  # Remove duplicates while preserving order
+
+    if len(asset_list) > 10:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Too many assets requested: {len(asset_list)} (max 10)",
+        )
+
+    if len(asset_list) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one asset must be specified",
+        )
+
+    # Validate all assets exist
+    invalid_assets = [a for a in asset_list if a not in settings.assets_list]
+    if invalid_assets:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Assets not tracked: {', '.join(invalid_assets)}. Available: {', '.join(settings.assets_list)}",
+        )
+
+    # Validate date range (max 90 days)
+    period_days = (end - start).days
+    if period_days > 90:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Date range too large: {period_days} days (max 90 days)",
+        )
+    if period_days < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="End date must be after start date",
+        )
+
+    # Parse requested data types
+    requested_types = {dt.strip().lower() for dt in data_types.split(",")}
+    valid_types = {"spot", "futures", "lending"}
+    invalid_types = requested_types - valid_types
+    if invalid_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid data types: {invalid_types}. Valid: {valid_types}",
+        )
+
+    # Fetch data and calculate stats for all assets
+    multi_asset_data = {}
+    multi_asset_ohlcv = {}  # For correlation calculation
+
+    try:
+        for asset in asset_list:
+            asset_stats = {}
+
+            # Fetch spot data if requested
+            if "spot" in requested_types:
+                ohlcv_data = await get_ohlcv_data(asset, start, end)
+                if ohlcv_data:
+                    spot_stats_dict = calculate_spot_stats(ohlcv_data)
+                    if spot_stats_dict:
+                        asset_stats["spot"] = spot_stats_dict
+                        multi_asset_ohlcv[asset] = ohlcv_data  # Save for correlation
+                    else:
+                        asset_stats["spot"] = None
+                else:
+                    asset_stats["spot"] = None
+            else:
+                asset_stats["spot"] = None
+
+            # Fetch futures data if requested
+            if "futures" in requested_types and asset in settings.futures_assets_list:
+                funding_data = await get_funding_rates(asset, start, end)
+                mark_data = await get_mark_klines(asset, start, end)
+                oi_data = await get_open_interest(asset, start, end)
+
+                # Get spot price for basis calculation
+                if "spot" not in requested_types:
+                    ohlcv_data = await get_ohlcv_data(asset, start, end)
+                else:
+                    ohlcv_data = multi_asset_ohlcv.get(asset)
+
+                spot_price = None
+                if ohlcv_data and len(ohlcv_data) > 0:
+                    spot_price = float(ohlcv_data[-1]["close"])
+
+                if funding_data:
+                    futures_stats_dict = calculate_futures_stats(
+                        funding_data, mark_data, oi_data, spot_price
+                    )
+                    asset_stats["futures"] = futures_stats_dict
+                else:
+                    asset_stats["futures"] = None
+            else:
+                asset_stats["futures"] = None
+
+            # Fetch lending data if requested
+            if "lending" in requested_types:
+                # Map asset symbol to lending asset (e.g., BTC → WBTC)
+                lending_asset = None
+                if asset in settings.lending_assets_list:
+                    lending_asset = asset
+                elif asset in settings.lending_asset_symbol_map:
+                    lending_asset = settings.lending_asset_symbol_map[asset]
+
+                if lending_asset:
+                    lending_data_rows = await get_lending_data(lending_asset, start, end)
+                    if lending_data_rows:
+                        lending_stats_dict = calculate_lending_stats(lending_data_rows)
+                        asset_stats["lending"] = lending_stats_dict
+                    else:
+                        asset_stats["lending"] = None
+                else:
+                    asset_stats["lending"] = None
+            else:
+                asset_stats["lending"] = None
+
+            multi_asset_data[asset] = asset_stats
+
+        # Calculate cross-asset correlations if we have spot data for multiple assets
+        correlations = None
+        if len(multi_asset_ohlcv) >= 2:
+            correlations = calculate_cross_asset_correlations(multi_asset_ohlcv)
+
+        return MultiAssetAggregatedStatsResponse(
+            query={
+                "assets": asset_list,
+                "start": start,
+                "end": end,
+                "period_days": period_days,
+            },
+            data=multi_asset_data,
+            correlations=correlations,
+            timestamp=datetime.now(timezone.utc),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error calculating multi-asset aggregated stats: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to calculate statistics: {str(e)}",
+        )
+
+
+@router.get("/aggregated-stats/{asset}", response_model=AggregatedStatsResponse)
+async def get_aggregated_stats_single(
+    asset: str,
+    start: Annotated[datetime, Query(description="Start timestamp (ISO 8601, UTC)")],
+    end: Annotated[datetime, Query(description="End timestamp (ISO 8601, UTC)")],
+    data_types: Annotated[
+        str, Query(description="Comma-separated data types: spot, futures, lending")
+    ] = "spot,futures,lending",
+) -> AggregatedStatsResponse:
+    """
+    Get pre-aggregated statistics for a single asset.
+
+    Returns calculated metrics from existing database records (no new data fetching).
+    Designed for AI agents to reduce token usage by 80-85% vs raw time series data.
+
+    **Query Parameters:**
+    - `start`, `end`: ISO 8601 datetime (UTC), max range 90 days
+    - `data_types`: Comma-separated list of "spot", "futures", "lending" (optional, default: all)
+
+    **Response:**
+    - Returns available statistics for requested data types
+    - Unavailable data types return `null` (e.g., no lending data for BTC)
+    - No errors for missing data - graceful degradation
+
+    **Metrics Returned:**
+    - **Spot** (8 metrics): price stats, total return %, volatility %, Sharpe ratio, max drawdown %
+    - **Futures** (7 metrics): funding rates, basis premium, open interest change
+    - **Lending** (7 metrics): supply/borrow APY stats, spread
+
+    **Examples:**
+    - `/aggregated-stats/BTC?start=2025-01-01T00:00:00Z&end=2025-02-01T00:00:00Z`
+    - `/aggregated-stats/ETH?start=2025-01-01T00:00:00Z&end=2025-02-01T00:00:00Z&data_types=spot,futures`
+    """
+    from src.analysis.aggregated_stats import (
+        calculate_futures_stats,
+        calculate_lending_stats,
+        calculate_spot_stats,
+    )
+
+    # Validate asset
+    asset_upper = asset.upper()
+    if asset_upper not in settings.assets_list:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Asset '{asset}' not tracked. Available: {', '.join(settings.assets_list)}",
+        )
+
+    # Validate date range (max 90 days)
+    period_days = (end - start).days
+    if period_days > 90:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Date range too large: {period_days} days (max 90 days)",
+        )
+    if period_days < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="End date must be after start date",
+        )
+
+    # Parse requested data types
+    requested_types = {dt.strip().lower() for dt in data_types.split(",")}
+    valid_types = {"spot", "futures", "lending"}
+    invalid_types = requested_types - valid_types
+    if invalid_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid data types: {invalid_types}. Valid: {valid_types}",
+        )
+
+    # Fetch data and calculate stats
+    spot_stats = None
+    futures_stats = None
+    lending_stats = None
+    ohlcv_data = None  # Initialize for use in futures basis calculation
+
+    try:
+        # Fetch spot data if requested
+        if "spot" in requested_types and asset_upper in settings.assets_list:
+            ohlcv_data = await get_ohlcv_data(asset_upper, start, end)
+            if ohlcv_data:
+                spot_stats_dict = calculate_spot_stats(ohlcv_data)
+                if spot_stats_dict:
+                    spot_stats = AggregatedSpotStats(**spot_stats_dict)
+
+        # Fetch futures data if requested
+        if "futures" in requested_types and asset_upper in settings.futures_assets_list:
+            funding_data = await get_funding_rates(asset_upper, start, end)
+            mark_data = await get_mark_klines(asset_upper, start, end)
+            oi_data = await get_open_interest(asset_upper, start, end)
+
+            # Get current spot price for basis calculation
+            # Fetch spot data if not already loaded
+            if not ohlcv_data:
+                ohlcv_data = await get_ohlcv_data(asset_upper, start, end)
+
+            spot_price = None
+            if ohlcv_data and len(ohlcv_data) > 0:
+                spot_price = float(ohlcv_data[-1]["close"])
+
+            if funding_data:
+                futures_stats_dict = calculate_futures_stats(
+                    funding_data, mark_data, oi_data, spot_price
+                )
+                if futures_stats_dict:
+                    futures_stats = AggregatedFuturesStats(**futures_stats_dict)
+
+        # Fetch lending data if requested
+        if "lending" in requested_types:
+            # Map asset symbol to lending asset (e.g., BTC → WBTC)
+            lending_asset = None
+            if asset_upper in settings.lending_assets_list:
+                lending_asset = asset_upper
+            elif asset_upper in settings.lending_asset_symbol_map:
+                lending_asset = settings.lending_asset_symbol_map[asset_upper]
+
+            if lending_asset:
+                lending_data_rows = await get_lending_data(lending_asset, start, end)
+                if lending_data_rows:
+                    lending_stats_dict = calculate_lending_stats(lending_data_rows)
+                    if lending_stats_dict:
+                        lending_stats = AggregatedLendingStats(**lending_stats_dict)
+
+        return AggregatedStatsResponse(
+            asset=asset_upper,
+            query={"start": start, "end": end, "period_days": period_days},
+            spot=spot_stats,
+            futures=futures_stats,
+            lending=lending_stats,
+            timestamp=datetime.now(timezone.utc),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error calculating aggregated stats for {asset}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to calculate statistics: {str(e)}",
         )
 
 

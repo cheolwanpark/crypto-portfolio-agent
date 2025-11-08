@@ -154,6 +154,41 @@ class Settings(BaseSettings):
         description="Maximum time allowed for database queries in risk analysis",
     )
 
+    # Aave V3 Lending Protocol Parameters (Ethereum Mainnet)
+    # Source: Aave V3 Risk Parameters (hardcoded, accurate as of 2025)
+    AAVE_LIQUIDATION_THRESHOLDS: dict[str, float] = Field(
+        default={
+            "WETH": 0.825,  # 82.5% liquidation threshold
+            "WBTC": 0.750,  # 75%
+            "USDC": 0.870,  # 87%
+            "USDT": 0.870,  # 87%
+            "DAI": 0.800,   # 80%
+        },
+        description="Liquidation thresholds per asset (LTV at which liquidation occurs)",
+    )
+
+    AAVE_MAX_LTV: dict[str, float] = Field(
+        default={
+            "WETH": 0.800,  # 80% maximum LTV
+            "WBTC": 0.700,  # 70%
+            "USDC": 0.850,  # 85%
+            "USDT": 0.850,  # 85%
+            "DAI": 0.750,   # 75%
+        },
+        description="Maximum LTV allowed for borrowing per asset",
+    )
+
+    AAVE_LIQUIDATION_BONUS: float = Field(
+        default=0.05,
+        description="Liquidation bonus percentage (5% = 0.05)",
+    )
+
+    # Lending data staleness validation
+    LENDING_DATA_MAX_AGE_HOURS: int = Field(
+        default=48,
+        description="Maximum age of lending data before warning (hours)",
+    )
+
     @property
     def assets_list(self) -> list[str]:
         """Parse tracked assets into a list."""

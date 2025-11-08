@@ -12,18 +12,19 @@ from src import database
 
 async def fetch_portfolio_data(
     assets: list[str], lookback_days: int
-) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], int]:
+) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], dict[str, pd.DataFrame], int]:
     """
-    Fetch historical spot and futures data for multiple assets concurrently.
+    Fetch historical spot, futures, and lending data for multiple assets concurrently.
 
     Args:
         assets: List of asset symbols (e.g., ['BTC', 'ETH'])
         lookback_days: Number of days to look back
 
     Returns:
-        Tuple of (spot_data_dict, futures_data_dict, actual_days_available)
+        Tuple of (spot_data_dict, futures_data_dict, lending_data_dict, actual_days_available)
         - spot_data_dict: {asset: DataFrame with columns [timestamp, close]}
         - futures_data_dict: {asset: DataFrame with columns [timestamp, mark_price, funding_rate]}
+        - lending_data_dict: {asset: DataFrame with lending rates and indices}
         - actual_days_available: Minimum days available across all assets
     """
     end_time = datetime.utcnow()
@@ -45,9 +46,16 @@ async def fetch_portfolio_data(
     funding_rate_tasks = [
         database.get_funding_rates(asset, start_time, end_time) for asset in assets
     ]
-    mark_price_results, funding_rate_results = await asyncio.gather(
+
+    # Fetch lending data concurrently
+    lending_tasks = [
+        database.get_lending_data(asset, start_time, end_time) for asset in assets
+    ]
+
+    mark_price_results, funding_rate_results, lending_results = await asyncio.gather(
         asyncio.gather(*mark_price_tasks, return_exceptions=True),
         asyncio.gather(*funding_rate_tasks, return_exceptions=True),
+        asyncio.gather(*lending_tasks, return_exceptions=True),
     )
 
     # Process spot data
@@ -63,6 +71,10 @@ async def fetch_portfolio_data(
 
         df = pd.DataFrame(result)
         df["timestamp"] = pd.to_datetime(df["timestamp"])
+        # Convert Decimal to float, coerce errors to NaN
+        df["close"] = pd.to_numeric(df["close"], errors='coerce')
+        # Drop rows with NaN prices (invalid data)
+        df = df.dropna(subset=["close"])
         df = df[["timestamp", "close"]].sort_values("timestamp")
         spot_data_dict[asset] = df
         logger.info(f"Fetched {len(df)} spot candles for {asset}")
@@ -85,16 +97,24 @@ async def fetch_portfolio_data(
         # Process mark prices
         mark_df = pd.DataFrame(mark_result)
         mark_df["timestamp"] = pd.to_datetime(mark_df["timestamp"])
+        # Convert Decimal to float, coerce errors to NaN
+        mark_df["close"] = pd.to_numeric(mark_df["close"], errors='coerce')
+        # Drop rows with NaN prices (invalid data)
+        mark_df = mark_df.dropna(subset=["close"])
         mark_df = mark_df[["timestamp", "close"]].rename(columns={"close": "mark_price"})
 
         # Process funding rates
         funding_df = pd.DataFrame(funding_result) if funding_result else pd.DataFrame()
         if not funding_df.empty:
             funding_df["timestamp"] = pd.to_datetime(funding_df["timestamp"])
+            # Convert Decimal to float and fill NULL values with 0.0 (neutral funding rate)
+            funding_df["funding_rate"] = pd.to_numeric(funding_df["funding_rate"], errors='coerce').fillna(0.0)
             funding_df = funding_df[["timestamp", "funding_rate"]]
 
             # Merge mark prices and funding rates
             futures_df = pd.merge(mark_df, funding_df, on="timestamp", how="left")
+            # Fill any remaining NaN funding rates with 0.0
+            futures_df["funding_rate"] = futures_df["funding_rate"].fillna(0.0)
         else:
             futures_df = mark_df
             futures_df["funding_rate"] = 0.0  # Default to 0 if no funding data
@@ -105,6 +125,39 @@ async def fetch_portfolio_data(
             f"Fetched {len(mark_df)} mark prices and {len(funding_df)} funding rates for {asset}"
         )
 
+    # Process lending data
+    lending_data_dict = {}
+    for asset, result in zip(assets, lending_results):
+        if isinstance(result, Exception):
+            logger.warning(f"Failed to fetch lending data for {asset}: {result}")
+            continue
+
+        if not result:
+            logger.debug(f"No lending data available for {asset}")
+            continue
+
+        df = pd.DataFrame(result)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        # Keep relevant lending columns: supply_rate_ray, variable_borrow_rate_ray,
+        # stable_borrow_rate_ray, liquidity_index, variable_borrow_index
+        required_cols = ["timestamp"]
+        optional_cols = [
+            "supply_rate_ray",
+            "variable_borrow_rate_ray",
+            "stable_borrow_rate_ray",
+            "liquidity_index",
+            "variable_borrow_index",
+        ]
+        available_cols = [col for col in optional_cols if col in df.columns]
+
+        # Convert Decimal columns to float, coerce errors to NaN, fill with 0
+        for col in available_cols:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+
+        df = df[required_cols + available_cols].sort_values("timestamp")
+        lending_data_dict[asset] = df
+        logger.info(f"Fetched {len(df)} lending data points for {asset}")
+
     # Calculate actual days available (minimum across all assets)
     min_days = lookback_days
     if spot_data_dict:
@@ -114,21 +167,24 @@ async def fetch_portfolio_data(
 
     logger.info(f"Actual data availability: {min_days} days")
 
-    return spot_data_dict, futures_data_dict, min_days
+    return spot_data_dict, futures_data_dict, lending_data_dict, min_days
 
 
 def resample_to_daily(
-    spot_data: dict[str, pd.DataFrame], futures_data: dict[str, pd.DataFrame]
-) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
+    spot_data: dict[str, pd.DataFrame],
+    futures_data: dict[str, pd.DataFrame],
+    lending_data: dict[str, pd.DataFrame],
+) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
     """
-    Resample 12h spot OHLCV and 8h futures data to daily (24h) intervals.
+    Resample 12h spot OHLCV, 8h futures data, and lending data to daily (24h) intervals.
 
     Args:
         spot_data: Dict of {asset: DataFrame with 12h interval data}
         futures_data: Dict of {asset: DataFrame with 8h interval data}
+        lending_data: Dict of {asset: DataFrame with lending data}
 
     Returns:
-        Tuple of (daily_spot_data, daily_futures_data)
+        Tuple of (daily_spot_data, daily_futures_data, daily_lending_data)
     """
     logger.info("Resampling data to daily intervals")
 
@@ -176,22 +232,52 @@ def resample_to_daily(
             f"Resampled {asset} futures: {len(df)} -> {len(daily_df)} daily data points"
         )
 
-    return daily_spot, daily_futures
+    # Resample lending data
+    daily_lending = {}
+    for asset, df in lending_data.items():
+        if df.empty:
+            continue
+
+        df_copy = df.copy()
+        df_copy.set_index("timestamp", inplace=True)
+
+        # Resample lending metrics (take last value of each day for indices and rates)
+        daily_data = {}
+        for col in df_copy.columns:
+            daily_data[col] = df_copy.resample("D")[col].last()
+
+        # Create DataFrame
+        daily_df = pd.DataFrame(daily_data)
+        daily_df["timestamp"] = daily_df.index
+        daily_df = daily_df.dropna(how="all", subset=[c for c in daily_df.columns if c != "timestamp"])
+        daily_df = daily_df.reset_index(drop=True)
+
+        if not daily_df.empty:
+            daily_lending[asset] = daily_df
+            logger.debug(
+                f"Resampled {asset} lending: {len(df)} -> {len(daily_df)} daily data points"
+            )
+
+    return daily_spot, daily_futures, daily_lending
 
 
 def align_time_series(
-    spot_data: dict[str, pd.DataFrame], futures_data: dict[str, pd.DataFrame]
+    spot_data: dict[str, pd.DataFrame],
+    futures_data: dict[str, pd.DataFrame],
+    lending_data: dict[str, pd.DataFrame],
 ) -> tuple[pd.DataFrame, list[str]]:
     """
-    Align spot and futures time series to common timestamps with forward-fill.
+    Align spot, futures, and lending time series to common timestamps with forward-fill.
 
     Args:
         spot_data: Dict of {asset: DataFrame with daily spot prices}
         futures_data: Dict of {asset: DataFrame with daily futures data}
+        lending_data: Dict of {asset: DataFrame with daily lending data}
 
     Returns:
         Tuple of (aligned_df, warnings)
-        - aligned_df: Multi-column DataFrame with columns: timestamp, {asset}_spot, {asset}_futures_mark, {asset}_funding
+        - aligned_df: Multi-column DataFrame with columns: timestamp, {asset}_spot, {asset}_futures_mark,
+                      {asset}_funding, {asset}_liquidity_index, {asset}_variable_borrow_index, etc.
         - warnings: List of warning messages about data gaps
     """
     logger.info("Aligning time series across assets")
@@ -203,6 +289,8 @@ def align_time_series(
     for df in spot_data.values():
         all_timestamps.update(df["timestamp"])
     for df in futures_data.values():
+        all_timestamps.update(df["timestamp"])
+    for df in lending_data.values():
         all_timestamps.update(df["timestamp"])
 
     if not all_timestamps:
@@ -260,6 +348,79 @@ def align_time_series(
             warnings.append(f"{asset} funding: {na_count} missing funding rates")
             # Fill missing funding rates with 0 (neutral)
             aligned[f"{asset}_funding"] = aligned[f"{asset}_funding"].fillna(0.0)
+
+    # Add lending data
+    for asset, df in lending_data.items():
+        # Add liquidity index (for supply positions)
+        if "liquidity_index" in df.columns:
+            index_df = df[["timestamp", "liquidity_index"]].rename(
+                columns={"liquidity_index": f"{asset}_liquidity_index"}
+            )
+            aligned = pd.merge(aligned, index_df, on="timestamp", how="left")
+            aligned[f"{asset}_liquidity_index"] = aligned[f"{asset}_liquidity_index"].ffill()
+
+            if aligned[f"{asset}_liquidity_index"].isna().any():
+                na_count = aligned[f"{asset}_liquidity_index"].isna().sum()
+                warnings.append(f"{asset} lending: {na_count} missing liquidity indices")
+                aligned[f"{asset}_liquidity_index"] = aligned[f"{asset}_liquidity_index"].bfill()
+
+        # Add variable borrow index (for borrow positions)
+        if "variable_borrow_index" in df.columns:
+            borrow_index_df = df[["timestamp", "variable_borrow_index"]].rename(
+                columns={"variable_borrow_index": f"{asset}_variable_borrow_index"}
+            )
+            aligned = pd.merge(aligned, borrow_index_df, on="timestamp", how="left")
+            aligned[f"{asset}_variable_borrow_index"] = aligned[
+                f"{asset}_variable_borrow_index"
+            ].ffill()
+
+            if aligned[f"{asset}_variable_borrow_index"].isna().any():
+                na_count = aligned[f"{asset}_variable_borrow_index"].isna().sum()
+                warnings.append(f"{asset} lending: {na_count} missing variable borrow indices")
+                aligned[f"{asset}_variable_borrow_index"] = aligned[
+                    f"{asset}_variable_borrow_index"
+                ].bfill()
+
+        # Add supply rate (for APY calculations)
+        if "supply_rate_ray" in df.columns:
+            supply_rate_df = df[["timestamp", "supply_rate_ray"]].rename(
+                columns={"supply_rate_ray": f"{asset}_supply_rate"}
+            )
+            aligned = pd.merge(aligned, supply_rate_df, on="timestamp", how="left")
+            aligned[f"{asset}_supply_rate"] = aligned[f"{asset}_supply_rate"].ffill()
+
+            if aligned[f"{asset}_supply_rate"].isna().any():
+                aligned[f"{asset}_supply_rate"] = aligned[f"{asset}_supply_rate"].fillna(0.0)
+
+        # Add variable borrow rate
+        if "variable_borrow_rate_ray" in df.columns:
+            var_borrow_rate_df = df[["timestamp", "variable_borrow_rate_ray"]].rename(
+                columns={"variable_borrow_rate_ray": f"{asset}_variable_borrow_rate"}
+            )
+            aligned = pd.merge(aligned, var_borrow_rate_df, on="timestamp", how="left")
+            aligned[f"{asset}_variable_borrow_rate"] = aligned[
+                f"{asset}_variable_borrow_rate"
+            ].ffill()
+
+            if aligned[f"{asset}_variable_borrow_rate"].isna().any():
+                aligned[f"{asset}_variable_borrow_rate"] = aligned[
+                    f"{asset}_variable_borrow_rate"
+                ].fillna(0.0)
+
+        # Add stable borrow rate
+        if "stable_borrow_rate_ray" in df.columns:
+            stable_borrow_rate_df = df[["timestamp", "stable_borrow_rate_ray"]].rename(
+                columns={"stable_borrow_rate_ray": f"{asset}_stable_borrow_rate"}
+            )
+            aligned = pd.merge(aligned, stable_borrow_rate_df, on="timestamp", how="left")
+            aligned[f"{asset}_stable_borrow_rate"] = aligned[
+                f"{asset}_stable_borrow_rate"
+            ].ffill()
+
+            if aligned[f"{asset}_stable_borrow_rate"].isna().any():
+                aligned[f"{asset}_stable_borrow_rate"] = aligned[
+                    f"{asset}_stable_borrow_rate"
+                ].fillna(0.0)
 
     logger.info(f"Aligned data: {len(aligned)} daily data points")
     if warnings:

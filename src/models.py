@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from loguru import logger
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class OHLCVCandle(BaseModel):
@@ -509,9 +509,25 @@ class PositionInput(BaseModel):
 
     asset: str = Field(description="Asset symbol (e.g., BTC, ETH)")
     quantity: float = Field(gt=0, description="Position size (must be positive)")
-    position_type: str = Field(description="Position type: spot, futures_long, futures_short")
-    entry_price: float = Field(gt=0, description="Entry price in USD")
-    leverage: float = Field(default=1.0, gt=0, le=125, description="Leverage (1-125x, default: 1)")
+    position_type: str = Field(
+        description="Position type: spot, futures_long, futures_short, lending_supply, lending_borrow"
+    )
+    entry_price: float = Field(default=0.0, ge=0, description="Entry price in USD (required for spot/futures, ignored for lending)")
+    leverage: float = Field(default=1.0, gt=0, le=125, description="Leverage (1-125x, for futures only)")
+
+    # Lending-specific fields
+    entry_timestamp: datetime | None = Field(
+        default=None,
+        description="When lending position opened (required for lending positions)",
+    )
+    entry_index: str | None = Field(
+        default=None,
+        description="Liquidity/borrow index at entry (optional - will be looked up if not provided)",
+    )
+    borrow_type: str | None = Field(
+        default=None,
+        description="Borrow rate type: 'variable' or 'stable' (required for lending_borrow)",
+    )
 
     @field_validator("asset")
     @classmethod
@@ -523,10 +539,22 @@ class PositionInput(BaseModel):
     @classmethod
     def validate_position_type(cls, v: str) -> str:
         """Validate position type."""
-        valid_types = ["spot", "futures_long", "futures_short"]
+        valid_types = ["spot", "futures_long", "futures_short", "lending_supply", "lending_borrow"]
         if v not in valid_types:
             raise ValueError(f"position_type must be one of {valid_types}")
         return v
+
+    @model_validator(mode="after")
+    def validate_lending_fields(self) -> "PositionInput":
+        """Validate lending-specific fields are provided."""
+        if self.position_type in ["lending_supply", "lending_borrow"]:
+            if self.entry_timestamp is None:
+                raise ValueError(f"entry_timestamp required for {self.position_type} positions")
+            if self.position_type == "lending_borrow" and self.borrow_type is None:
+                raise ValueError("borrow_type ('variable' or 'stable') required for lending_borrow positions")
+            if self.borrow_type and self.borrow_type not in ["variable", "stable"]:
+                raise ValueError("borrow_type must be 'variable' or 'stable'")
+        return self
 
 
 class RiskProfileRequest(BaseModel):
@@ -549,6 +577,36 @@ class SensitivityRow(BaseModel):
     return_pct: float = Field(description="Return percentage")
 
 
+class LendingMetrics(BaseModel):
+    """Account-level lending risk metrics (Aave protocol)."""
+
+    total_supplied_value: float = Field(description="Total value of all supply positions (USD)")
+    total_borrowed_value: float = Field(description="Total value of all borrow positions (USD, absolute)")
+    net_lending_value: float = Field(description="Net lending value: supplied - borrowed (USD)")
+
+    # Account-level risk metrics
+    current_ltv: float = Field(description="Current loan-to-value ratio (0-1, borrowed/supplied)")
+    health_factor: float = Field(
+        description="Aave health factor: (collateral × liq_threshold) / borrowed. >1 = safe, <1 = liquidation"
+    )
+    max_safe_borrow: float = Field(
+        description="Maximum additional borrowing before hitting max LTV (USD)"
+    )
+
+    # Yield metrics
+    net_apy: float = Field(description="Net APY: (supply_yield - borrow_cost) / net_value")
+    weighted_supply_apy: float = Field(description="Weighted average supply APY across all supply positions")
+    weighted_borrow_apy: float = Field(description="Weighted average borrow APY across all borrow positions")
+
+    # Data quality indicators
+    data_timestamp: datetime = Field(description="Timestamp of latest lending data used")
+    data_age_hours: float = Field(description="Hours since latest data (staleness indicator)")
+    data_warning: str | None = Field(
+        default=None,
+        description="Warning if data is stale (>48h) or other data quality issues",
+    )
+
+
 class RiskMetrics(BaseModel):
     """Comprehensive risk metrics for the portfolio."""
 
@@ -563,6 +621,12 @@ class RiskMetrics(BaseModel):
     delta_exposure: float = Field(description="Total delta exposure (market directional risk)")
     correlation_matrix: dict[str, dict[str, float]] = Field(
         description="Asset correlation matrix"
+    )
+
+    # Lending-specific metrics (None if no lending positions in portfolio)
+    lending_metrics: LendingMetrics | None = Field(
+        default=None,
+        description="Lending risk metrics (only present if portfolio contains lending positions)",
     )
 
 
@@ -591,3 +655,83 @@ class RiskProfileResponse(BaseModel):
     scenarios: list[ScenarioResult] = Field(
         description="Predefined scenario analysis results (bull/bear markets, etc.)"
     )
+
+
+# ==================== Aggregated Statistics Models ====================
+
+
+class AggregatedSpotStats(BaseModel):
+    """Aggregated spot market statistics."""
+
+    current_price: float = Field(description="Current spot price")
+    min_price: float = Field(description="Minimum price over period")
+    max_price: float = Field(description="Maximum price over period")
+    mean_price: float = Field(description="Mean price over period")
+    total_return_pct: float = Field(description="Total return percentage over period")
+    volatility_pct: float = Field(description="Annualized volatility percentage")
+    sharpe_ratio: float = Field(description="Annualized Sharpe ratio")
+    max_drawdown_pct: float = Field(description="Maximum drawdown percentage (negative)")
+
+
+class AggregatedFuturesStats(BaseModel):
+    """Aggregated futures market statistics."""
+
+    current_funding_rate_pct: float = Field(description="Current 8h funding rate percentage")
+    mean_funding_rate_pct: float = Field(description="Mean funding rate over period")
+    cumulative_funding_cost_pct: float = Field(
+        description="Cumulative funding cost over period (sum of all rates)"
+    )
+    current_basis_premium_pct: float | None = Field(
+        default=None, description="Current basis premium (mark - spot) / spot * 100"
+    )
+    mean_basis_premium_pct: float | None = Field(
+        default=None, description="Mean basis premium over period"
+    )
+    current_open_interest: float | None = Field(
+        default=None, description="Current open interest in USD"
+    )
+    open_interest_change_pct: float | None = Field(
+        default=None, description="Open interest change percentage over period"
+    )
+
+
+class AggregatedLendingStats(BaseModel):
+    """Aggregated lending market statistics."""
+
+    current_supply_apy_pct: float = Field(description="Current supply APY percentage")
+    mean_supply_apy_pct: float = Field(description="Mean supply APY over period")
+    min_supply_apy_pct: float = Field(description="Minimum supply APY over period")
+    max_supply_apy_pct: float = Field(description="Maximum supply APY over period")
+    current_variable_borrow_apy_pct: float = Field(description="Current variable borrow APY percentage")
+    mean_variable_borrow_apy_pct: float = Field(description="Mean variable borrow APY over period")
+    spread_pct: float = Field(description="Current spread (borrow - supply) percentage")
+
+
+class AggregatedStatsResponse(BaseModel):
+    """Response for single-asset aggregated statistics."""
+
+    asset: str = Field(description="Asset symbol (e.g., BTC)")
+    query: dict = Field(description="Query parameters used (start, end, period_days)")
+    spot: AggregatedSpotStats | None = Field(
+        default=None, description="Spot market statistics (null if unavailable)"
+    )
+    futures: AggregatedFuturesStats | None = Field(
+        default=None, description="Futures market statistics (null if unavailable)"
+    )
+    lending: AggregatedLendingStats | None = Field(
+        default=None, description="Lending market statistics (null if unavailable)"
+    )
+    timestamp: datetime = Field(description="Response generation timestamp (UTC)")
+
+
+class MultiAssetAggregatedStatsResponse(BaseModel):
+    """Response for multi-asset aggregated statistics."""
+
+    query: dict = Field(description="Query parameters used (assets, start, end, period_days)")
+    data: dict[str, dict] = Field(
+        description="Per-asset statistics: {asset: {spot, futures, lending}}"
+    )
+    correlations: dict[str, dict[str, float]] | None = Field(
+        default=None, description="Cross-asset correlation matrix (null if unavailable)"
+    )
+    timestamp: datetime = Field(description="Response generation timestamp (UTC)")

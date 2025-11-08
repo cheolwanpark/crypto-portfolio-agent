@@ -61,6 +61,7 @@ def run_scenario(
     positions: list[dict[str, Any]],
     base_prices: dict[str, float],
     scenario_def: dict[str, Any],
+    current_indices: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, Any]:
     """
     Run a scenario analysis on the portfolio.
@@ -69,29 +70,37 @@ def run_scenario(
         positions: List of position dicts
         base_prices: Dict mapping asset to base (current) price
         scenario_def: Scenario definition dict with keys: name, description, shock_type, shock_value/shocks
+        current_indices: Optional dict of current lending indices for lending positions
 
     Returns:
         Dict with keys: name, description, portfolio_value, pnl, return_pct
     """
-    base_value = calculate_portfolio_value(positions, base_prices)
+    base_value = calculate_portfolio_value(positions, base_prices, current_indices)
 
-    # Apply scenario shocks
-    if scenario_def["shock_type"] == "uniform":
-        # Apply uniform shock to all assets
-        shocked_prices = apply_price_shock(base_prices, scenario_def["shock_value"])
-    elif scenario_def["shock_type"] == "asset_specific":
-        # Apply asset-specific shocks
-        shocks = scenario_def["shocks"]
-        default_shock = shocks.get("default", 0.0)
-        shocked_prices = {}
-        for asset, price in base_prices.items():
-            shock = shocks.get(asset, default_shock)
-            shocked_prices[asset] = price * (1 + shock)
+    # Only apply shocks if there are prices to shock
+    # Lending-only portfolios have no price sensitivity
+    if base_prices:
+        # Apply scenario shocks
+        if scenario_def["shock_type"] == "uniform":
+            # Apply uniform shock to all assets
+            shocked_prices = apply_price_shock(base_prices, scenario_def["shock_value"])
+        elif scenario_def["shock_type"] == "asset_specific":
+            # Apply asset-specific shocks
+            shocks = scenario_def["shocks"]
+            default_shock = shocks.get("default", 0.0)
+            shocked_prices = {}
+            for asset, price in base_prices.items():
+                shock = shocks.get(asset, default_shock)
+                shocked_prices[asset] = price * (1 + shock)
+        else:
+            raise ValueError(f"Unknown shock type: {scenario_def['shock_type']}")
+
+        # Calculate portfolio value under scenario
+        scenario_value = calculate_portfolio_value(positions, shocked_prices, current_indices)
     else:
-        raise ValueError(f"Unknown shock type: {scenario_def['shock_type']}")
+        # No prices to shock (lending-only portfolio) - value remains same
+        scenario_value = base_value
 
-    # Calculate portfolio value under scenario
-    scenario_value = calculate_portfolio_value(positions, shocked_prices)
     pnl = scenario_value - base_value
     return_pct = (pnl / base_value * 100) if base_value != 0 else 0.0
 
@@ -105,7 +114,9 @@ def run_scenario(
 
 
 def run_all_scenarios(
-    positions: list[dict[str, Any]], base_prices: dict[str, float]
+    positions: list[dict[str, Any]],
+    base_prices: dict[str, float],
+    current_indices: dict[str, dict[str, float]] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Run all predefined scenarios on the portfolio.
@@ -113,13 +124,14 @@ def run_all_scenarios(
     Args:
         positions: List of position dicts
         base_prices: Dict mapping asset to base (current) price
+        current_indices: Optional dict of current lending indices for lending positions
 
     Returns:
         List of scenario result dicts
     """
     results = []
     for scenario_key, scenario_def in SCENARIOS.items():
-        result = run_scenario(positions, base_prices, scenario_def)
+        result = run_scenario(positions, base_prices, scenario_def, current_indices)
         results.append(result)
     return results
 

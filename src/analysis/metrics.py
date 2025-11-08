@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
+from src.models import convert_ray_to_apy
+
 
 def calculate_returns(price_series: np.ndarray | pd.Series) -> np.ndarray:
     """
@@ -296,3 +298,92 @@ def calculate_portfolio_variance(
             variance += w1 * w2 * sigma1 * sigma2 * rho
 
     return float(variance)
+
+
+def calculate_net_apy(
+    supply_positions: list[dict],
+    borrow_positions: list[dict],
+    current_rates: dict[str, dict[str, float]],
+) -> tuple[float, float, float]:
+    """
+    Calculate net APY and weighted averages for lending positions.
+
+    Args:
+        supply_positions: List of supply position dicts with 'asset' and 'value' keys
+        borrow_positions: List of borrow position dicts with 'asset', 'value', and 'borrow_type' keys
+        current_rates: Dict of {asset: {supply_rate: float (RAY), variable_borrow_rate: float (RAY), stable_borrow_rate: float (RAY)}}
+
+    Returns:
+        Tuple of (net_apy, weighted_supply_apy, weighted_borrow_apy)
+        All values are in percentage (e.g., 5.25 for 5.25%)
+    """
+    # Calculate total supply value and weighted supply APY
+    total_supply_value = 0.0
+    weighted_supply_apy_sum = 0.0
+
+    for pos in supply_positions:
+        asset = pos["asset"]
+        value = pos.get("value", 0.0)
+        total_supply_value += value
+
+        # Get supply rate for this asset
+        if asset in current_rates and "supply_rate" in current_rates[asset]:
+            supply_rate_ray = current_rates[asset]["supply_rate"]
+            supply_apy = convert_ray_to_apy(supply_rate_ray)
+            weighted_supply_apy_sum += value * supply_apy
+        else:
+            logger.warning(f"No supply rate found for asset {asset}, using 0%")
+
+    # Calculate total borrow value and weighted borrow APY
+    total_borrow_value = 0.0
+    weighted_borrow_apy_sum = 0.0
+
+    for pos in borrow_positions:
+        asset = pos["asset"]
+        value = abs(pos.get("value", 0.0))  # Borrow value should be positive for calculations
+        borrow_type = pos.get("borrow_type", "variable")
+        total_borrow_value += value
+
+        # Get borrow rate for this asset
+        if asset in current_rates:
+            if borrow_type == "stable" and "stable_borrow_rate" in current_rates[asset]:
+                borrow_rate_ray = current_rates[asset]["stable_borrow_rate"]
+            elif "variable_borrow_rate" in current_rates[asset]:
+                borrow_rate_ray = current_rates[asset]["variable_borrow_rate"]
+            else:
+                logger.warning(f"No {borrow_type} borrow rate found for asset {asset}, using 0%")
+                borrow_rate_ray = 0
+
+            borrow_apy = convert_ray_to_apy(borrow_rate_ray)
+            weighted_borrow_apy_sum += value * borrow_apy
+        else:
+            logger.warning(f"No borrow rates found for asset {asset}, using 0%")
+
+    # Calculate weighted averages
+    weighted_supply_apy = (
+        weighted_supply_apy_sum / total_supply_value if total_supply_value > 0 else 0.0
+    )
+    weighted_borrow_apy = (
+        weighted_borrow_apy_sum / total_borrow_value if total_borrow_value > 0 else 0.0
+    )
+
+    # Calculate net APY
+    # Net APY = (total_supply_yield - total_borrow_cost) / net_value
+    total_supply_yield = weighted_supply_apy_sum
+    total_borrow_cost = weighted_borrow_apy_sum
+    net_value = total_supply_value - total_borrow_value
+
+    if net_value > 0:
+        net_apy = (total_supply_yield - total_borrow_cost) / net_value
+    elif net_value < 0:
+        # If net value is negative (over-leveraged), net APY is negative
+        net_apy = (total_supply_yield - total_borrow_cost) / abs(net_value)
+    else:
+        # If net value is exactly 0, return 0
+        net_apy = 0.0
+
+    logger.debug(
+        f"Net APY: {net_apy:.2f}% (supply: {weighted_supply_apy:.2f}%, borrow: {weighted_borrow_apy:.2f}%)"
+    )
+
+    return float(net_apy), float(weighted_supply_apy), float(weighted_borrow_apy)
