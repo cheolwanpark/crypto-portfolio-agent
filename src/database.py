@@ -893,6 +893,11 @@ async def init_lending_schemas() -> None:
 
 # ==================== Lending Data Validation ====================
 
+# Validation constants for RAY format values (matches lending.py)
+MAX_RATE_RAY = int(2e27)  # 200% APY maximum
+MIN_INDEX_RAY = int(1e27)  # Liquidity indices start at 1.0 in RAY
+MAX_INDEX_RAY = int(1e30)  # Upper bound for indices
+
 
 def validate_lending_data(data: dict) -> bool:
     """
@@ -908,26 +913,26 @@ def validate_lending_data(data: dict) -> bool:
         ValueError: If validation fails with details
     """
     try:
-        # Rates must be non-negative and within reasonable range (0 to 2e27 = 0-200% APY)
+        # Rates must be non-negative and within reasonable range (0 to 200% APY)
         supply_rate = float(data["supply_rate_ray"])
-        if supply_rate < 0 or supply_rate > 2e27:
+        if supply_rate < 0 or supply_rate > MAX_RATE_RAY:
             raise ValueError(f"Supply rate out of range (0-200% APY): {supply_rate}")
 
         variable_rate = float(data["variable_borrow_rate_ray"])
-        if variable_rate < 0 or variable_rate > 2e27:
+        if variable_rate < 0 or variable_rate > MAX_RATE_RAY:
             raise ValueError(f"Variable borrow rate out of range (0-200% APY): {variable_rate}")
 
         stable_rate = float(data["stable_borrow_rate_ray"])
-        if stable_rate < 0 or stable_rate > 2e27:
+        if stable_rate < 0 or stable_rate > MAX_RATE_RAY:
             raise ValueError(f"Stable borrow rate out of range (0-200% APY): {stable_rate}")
 
-        # Indices must be within reasonable range (typically 1e27 to 1e30)
+        # Indices must be within reasonable range
         liquidity_index = float(data["liquidity_index"])
-        if liquidity_index < 1e27 or liquidity_index > 1e30:
+        if liquidity_index < MIN_INDEX_RAY or liquidity_index > MAX_INDEX_RAY:
             raise ValueError(f"Liquidity index out of range: {liquidity_index}")
 
         variable_borrow_index = float(data["variable_borrow_index"])
-        if variable_borrow_index < 1e27 or variable_borrow_index > 1e30:
+        if variable_borrow_index < MIN_INDEX_RAY or variable_borrow_index > MAX_INDEX_RAY:
             raise ValueError(f"Variable borrow index out of range: {variable_borrow_index}")
 
         # Validate reserve address format (Ethereum address)

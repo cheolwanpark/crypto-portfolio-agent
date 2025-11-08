@@ -8,6 +8,11 @@ from src.config import settings
 from src.database import upsert_lending_batch
 from src.fetch.dune_client import DuneClient
 
+# Validation constants for RAY format values
+MAX_RATE_RAY = int(2e27)  # 200% APY maximum
+MIN_INDEX_RAY = int(1e27)  # Liquidity indices start at 1.0 in RAY
+MAX_INDEX_RAY = int(1e30)  # Upper bound for indices
+
 
 class LendingFetcher:
     """Fetcher for lending market data from Dune Analytics."""
@@ -43,7 +48,7 @@ class LendingFetcher:
                 logger.warning(f"Invalid reserve address format: {reserve}")
                 return False
 
-            # Check RAY rates are positive and within reasonable range (0 to 2e27 = 0% to 200%)
+            # Check RAY rates are positive and within reasonable range (0 to 200% APY)
             for rate_field in [
                 "supply_rate_ray",
                 "variable_borrow_rate_ray",
@@ -51,17 +56,17 @@ class LendingFetcher:
             ]:
                 rate_str = data_dict.get(rate_field, "0")
                 rate_int = int(rate_str)
-                if rate_int < 0 or rate_int > 2e27:
+                if rate_int < 0 or rate_int > MAX_RATE_RAY:
                     logger.warning(
                         f"Rate {rate_field} out of range (0-200% APY): {rate_int}"
                     )
                     return False
 
-            # Check indices are within reasonable range (typically 1e27 to 1e30)
+            # Check indices are within reasonable range
             for index_field in ["liquidity_index", "variable_borrow_index"]:
                 index_str = data_dict.get(index_field, "0")
                 index_int = int(index_str)
-                if index_int < 1e27 or index_int > 1e30:
+                if index_int < MIN_INDEX_RAY or index_int > MAX_INDEX_RAY:
                     logger.warning(f"Index {index_field} out of range: {index_int}")
                     return False
 
@@ -88,7 +93,7 @@ class LendingFetcher:
             logger.info(f"Fetching lending data from Dune (max_age={max_age_hours}h)")
 
             # Fetch all lending data from Dune
-            lending_data_list = self.client.get_lending_data(max_age_hours=max_age_hours)
+            lending_data_list = await self.client.get_lending_data(max_age_hours=max_age_hours)
 
             if not lending_data_list:
                 logger.warning("No lending data returned from Dune")

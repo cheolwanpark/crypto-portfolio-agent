@@ -168,10 +168,10 @@ class SchedulerService:
 
     async def lending_fetch_job(self) -> None:
         """
-        Scheduled job to fetch latest lending data from Aave.
+        Scheduled job to fetch latest lending data from Dune Analytics.
 
-        This job:
-        1. Fetches new events for all lending assets since last fetch
+        This job fetches all available lending data from Dune and updates the database.
+        Unlike event-based fetching, Dune provides pre-aggregated snapshots.
         """
         logger.info("=" * 60)
         logger.info(f"Starting scheduled lending fetch job at {datetime.now(timezone.utc)}")
@@ -182,18 +182,18 @@ class SchedulerService:
                 logger.error("Lending fetcher not initialized, skipping job")
                 return
 
-            # Fetch new events for all assets
-            logger.info("Fetching new lending events for all assets...")
-            results = await self.lending_fetcher.fetch_all_new_events()
+            # Fetch lending data from Dune for all assets
+            logger.info("Fetching lending data from Dune Analytics...")
+            results = await self.lending_fetcher.fetch_all_assets(max_age_hours=24)
 
             for asset, count in results.items():
                 if count > 0:
-                    logger.info(f"  {asset}: {count} new events")
+                    logger.info(f"  {asset}: {count} data points")
                 else:
-                    logger.debug(f"  {asset}: no new events")
+                    logger.debug(f"  {asset}: no new data")
 
             total_new = sum(results.values())
-            logger.info(f"Total new lending events fetched: {total_new}")
+            logger.info(f"Total lending data points fetched: {total_new}")
 
             logger.info("=" * 60)
             logger.info("Scheduled lending fetch job completed successfully")

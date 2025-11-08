@@ -1,6 +1,6 @@
 """Configuration management using Pydantic Settings."""
 
-from pydantic import Field, PostgresDsn
+from pydantic import Field, PostgresDsn, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -101,7 +101,8 @@ class Settings(BaseSettings):
         default=730,
         description="Days to backfill for lending data on initial setup",
     )
-    dune_api_key: SecretStr = Field(
+    dune_api_key: SecretStr | None = Field(
+        default=None,
         description="Dune Analytics API key for data fetching",
     )
     dune_lending_query_id: int = Field(
@@ -194,3 +195,8 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
+
+
+def get_config() -> Settings:
+    """Get the global settings instance."""
+    return settings

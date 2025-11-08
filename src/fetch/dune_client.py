@@ -5,15 +5,14 @@ This module provides a wrapper around the official dune-client package
 to fetch lending market data from Dune Analytics query 3328916.
 """
 
-import time
+import asyncio
 from datetime import datetime
 from decimal import Decimal
 
 from dune_client.client import DuneClient as OfficialDuneClient
-from dune_client.types import QueryParameter
 from loguru import logger
 
-from src.config import get_config
+from src.config import settings
 from src.models import DuneLendingData
 
 
@@ -30,38 +29,41 @@ class DuneClient:
         Initialize Dune client.
 
         Args:
-            api_key: Dune Analytics API key. If None, loads from environment.
+            api_key: Dune Analytics API key. If None, loads from config/environment.
         """
         if api_key:
             self.client = OfficialDuneClient(api_key=api_key)
         else:
-            # Load from environment variable DUNE_API_KEY
-            self.client = OfficialDuneClient.from_env()
+            # Load from pydantic settings
+            if settings.dune_api_key:
+                self.client = OfficialDuneClient(api_key=settings.dune_api_key.get_secret_value())
+            else:
+                # Fallback to environment variable
+                self.client = OfficialDuneClient.from_env()
 
-        self.config = get_config()
         self.last_request_time = 0
         self.min_request_interval = 65  # Free tier: ~1 req/min, use 65s to be safe
 
         logger.info("Dune Analytics client initialized")
 
-    def _rate_limit(self):
+    async def _rate_limit(self):
         """
         Apply rate limiting to avoid hitting API limits.
 
         Free tier allows ~1 request per minute.
         Waits if necessary to maintain the rate limit.
         """
-        now = time.time()
+        now = asyncio.get_event_loop().time()
         time_since_last_request = now - self.last_request_time
 
         if time_since_last_request < self.min_request_interval:
             sleep_time = self.min_request_interval - time_since_last_request
             logger.info(f"Rate limiting: sleeping for {sleep_time:.1f}s")
-            time.sleep(sleep_time)
+            await asyncio.sleep(sleep_time)
 
-        self.last_request_time = time.time()
+        self.last_request_time = asyncio.get_event_loop().time()
 
-    def get_lending_data(
+    async def get_lending_data(
         self, max_age_hours: int = 24, max_retries: int = 3
     ) -> list[DuneLendingData]:
         """
@@ -78,7 +80,7 @@ class DuneClient:
         Raises:
             Exception: If all retry attempts fail.
         """
-        query_id = self.config.dune_lending_query_id
+        query_id = settings.dune_lending_query_id
 
         for attempt in range(max_retries):
             try:
@@ -88,12 +90,16 @@ class DuneClient:
                 )
 
                 # Apply rate limiting
-                self._rate_limit()
+                await self._rate_limit()
 
-                # Fetch latest results from Dune
-                result = self.client.get_latest_result(
-                    query_id=query_id,
-                    max_age_hours=max_age_hours,
+                # Fetch latest results from Dune (runs in thread pool to avoid blocking)
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.get_latest_result(
+                        query_id=query_id,
+                        max_age_hours=max_age_hours,
+                    )
                 )
 
                 if not result or not result.result:
@@ -134,18 +140,21 @@ class DuneClient:
                     # Exponential backoff: 5s, 10s, 20s
                     sleep_time = 5 * (2**attempt)
                     logger.info(f"Retrying in {sleep_time}s...")
-                    time.sleep(sleep_time)
+                    await asyncio.sleep(sleep_time)
                 else:
                     logger.error(f"All {max_retries} attempts failed for Dune query {query_id}")
                     raise
 
         return []
 
-    def get_lending_data_for_asset(
+    async def get_lending_data_for_asset(
         self, asset: str, max_age_hours: int = 24
     ) -> list[DuneLendingData]:
         """
         Fetch lending data for a specific asset.
+
+        Note: Dune query 3328916 returns data for ALL assets.
+        This method fetches everything and filters client-side.
 
         Args:
             asset: Asset symbol (e.g., DAI, USDC, WETH)
@@ -154,7 +163,7 @@ class DuneClient:
         Returns:
             List of DuneLendingData objects filtered for the asset.
         """
-        all_data = self.get_lending_data(max_age_hours=max_age_hours)
+        all_data = await self.get_lending_data(max_age_hours=max_age_hours)
 
         # Filter for the specific asset
         filtered_data = [d for d in all_data if d.symbol.upper() == asset.upper()]
@@ -162,7 +171,7 @@ class DuneClient:
         logger.info(f"Filtered {len(filtered_data)} data points for asset {asset}")
         return filtered_data
 
-    def validate_connection(self) -> bool:
+    async def validate_connection(self) -> bool:
         """
         Validate that the Dune API connection is working.
 
@@ -173,7 +182,7 @@ class DuneClient:
             logger.info("Validating Dune Analytics connection...")
 
             # Try to fetch data with a very old max_age to use cached results
-            data = self.get_lending_data(max_age_hours=8760)  # 1 year
+            data = await self.get_lending_data(max_age_hours=8760)  # 1 year
 
             if data:
                 logger.info("Dune Analytics connection validated successfully")

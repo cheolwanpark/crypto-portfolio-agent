@@ -653,30 +653,30 @@ async def get_lending(
     ] = 100,
 ) -> LendingResponse:
     """
-    Get lending data for an asset.
+    Get lending data for an asset from Dune Analytics.
 
     Supports asset symbol mapping (e.g., BTC → WBTC, ETH → WETH).
 
     Returns:
-    - Event timestamps
+    - Data point timestamps
+    - Reserve contract address
     - Supply and borrow rates (both RAY and APY formats)
-    - Liquidity metrics
-    - Prices (ETH and USD)
+    - Liquidity and variable borrow indices
 
     Query Parameters:
     - start: Start timestamp (inclusive)
     - end: End timestamp (inclusive)
     - limit: Max records (1-1000, default 100)
     """
-    # Map user input to Aave symbol (e.g., BTC → WBTC)
+    # Map user input to lending asset symbol (e.g., BTC → WBTC)
     asset_upper = asset.upper()
 
-    # First check if it's already a native Aave symbol (more efficient)
+    # First check if it's already a tracked lending asset (more efficient)
     if asset_upper in settings.lending_assets_list:
-        aave_asset = asset_upper
+        lending_asset = asset_upper
     # Then try symbol mapping (e.g., BTC → WBTC)
     elif asset_upper in settings.lending_asset_symbol_map:
-        aave_asset = settings.lending_asset_symbol_map[asset_upper]
+        lending_asset = settings.lending_asset_symbol_map[asset_upper]
     else:
         # Build user-friendly error message showing both mapped and native symbols
         mapped_symbols = [
@@ -691,7 +691,7 @@ async def get_lending(
     try:
         # Query lending data from database
         rows = await get_lending_data(
-            asset=aave_asset,
+            asset=lending_asset,
             start_time=start,
             end_time=end,
             limit=limit,
@@ -710,18 +710,15 @@ async def get_lending(
 
                 data_point = LendingDataPoint(
                     timestamp=row["timestamp"],
+                    reserve_address=row["reserve_address"],
                     supply_rate_ray=str(row["supply_rate_ray"]),
                     supply_apy_percent=supply_apy,
                     variable_borrow_rate_ray=str(row["variable_borrow_rate_ray"]),
                     variable_borrow_apy_percent=variable_borrow_apy,
                     stable_borrow_rate_ray=str(row["stable_borrow_rate_ray"]),
                     stable_borrow_apy_percent=stable_borrow_apy,
-                    total_supplied=row["total_supplied"],
-                    available_liquidity=row["available_liquidity"],
-                    total_borrowed=row["total_borrowed"],
-                    utilization_rate=row["utilization_rate"],
-                    price_eth=row["price_eth"],
-                    price_usd=row["price_usd"],
+                    liquidity_index=str(row["liquidity_index"]),
+                    variable_borrow_index=str(row["variable_borrow_index"]),
                 )
                 data_points.append(data_point)
             except (ValueError, ArithmeticError, KeyError) as e:
@@ -742,7 +739,7 @@ async def get_lending(
             )
 
         return LendingResponse(
-            asset=aave_asset,
+            asset=lending_asset,
             data=data_points,
             count=len(data_points),
         )
