@@ -90,7 +90,7 @@ Sources: Mordor Intelligence, BCG, a16zcrypto, EY Parthenon
 
 # Business Model
 	•	AI usage credits (core revenue)
-	•	Optional affiliate fees from CEX/DeFi integrations
+	•	Optional affiliate fees from spot assets/DeFi integrations
 	•	Premium subscription for alerts, automated hedging, and backtesting features
 
 
