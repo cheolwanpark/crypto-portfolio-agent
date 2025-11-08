@@ -96,10 +96,10 @@ Sources: Mordor Intelligence, BCG, a16zcrypto, EY Parthenon
 
 
 # Go-to-Market Strategy
-	1.	Working professionals — LinkedIn, Blind performance ads
-	2.	Young crypto newcomers — YouTube Shorts, Instagram Reels
-	3.	Credibility building — interviews, case studies, fund manager insights
-	4.	Free-to-Paid flow — Risk Dashboard (free) → Hedging and scenarios (paid)
+1. Working professionals — LinkedIn, Blind performance ads
+2. Young crypto newcomers — YouTube Shorts, Instagram Reels
+3. Credibility building — interviews, case studies, fund manager insights
+4. Free-to-Paid flow — Risk Dashboard (free) → Hedging and scenarios (paid)
 
 
 
