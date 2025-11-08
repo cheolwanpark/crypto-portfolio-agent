@@ -30,8 +30,8 @@ class Settings(BaseSettings):
         description="Binance Futures API base URL",
     )
     binance_rate_limit_requests_per_minute: int = Field(
-        default=5000,
-        description="Rate limit for Binance API (safety margin below 6000)",
+        default=2440,
+        description="Rate limit for Binance API",
     )
     binance_request_delay_ms: int = Field(
         default=100,
