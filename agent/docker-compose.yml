@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: crypto-agent-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  agent-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crypto-agent-api
+    command: uvicorn src.server:app --host 0.0.0.0 --port 8001
+    ports:
+      - "8001:8001"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - BACKEND_API_URL=${BACKEND_API_URL:-http://localhost:8000}
+      - REDIS_URL=redis://redis:6379/0
+      - QUEUE_NAME=chat-agent
+      - MAX_WORKERS=10
+      - AGENT_MAX_TURNS=15
+      - AGENT_TIMEOUT_SECONDS=60
+      - AGENT_MAX_TOOL_CALLS=30
+      - LOG_LEVEL=INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  agent-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: rq worker chat-agent --with-scheduler
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - BACKEND_API_URL=${BACKEND_API_URL:-http://localhost:8000}
+      - REDIS_URL=redis://redis:6379/0
+      - QUEUE_NAME=chat-agent
+      - MAX_WORKERS=10
+      - AGENT_MAX_TURNS=15
+      - AGENT_TIMEOUT_SECONDS=60
+      - AGENT_MAX_TOOL_CALLS=30
+      - LOG_LEVEL=INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      replicas: 3
+
+volumes:
+  redis_data:
