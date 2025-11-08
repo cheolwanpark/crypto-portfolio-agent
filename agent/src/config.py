@@ -10,6 +10,7 @@ class Settings:
 
     claude_code_oauth_token: str
     backend_api_url: str
+    backend_api_key: str
     redis_url: str
     queue_name: str
     max_workers: int
@@ -22,6 +23,7 @@ class Settings:
         return cls(
             claude_code_oauth_token=os.getenv("CLAUDE_CODE_OAUTH_TOKEN", ""),
             backend_api_url=os.getenv("BACKEND_API_URL", "http://localhost:8000"),
+            backend_api_key=os.getenv("BACKEND_API_KEY", ""),
             redis_url=os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0"),
             queue_name=os.getenv("QUEUE_NAME", "chat-agent"),
             max_workers=int(os.getenv("MAX_WORKERS", "10")),

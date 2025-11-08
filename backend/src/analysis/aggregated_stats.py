@@ -55,7 +55,10 @@ def calculate_spot_stats(ohlcv_data: list[dict]) -> dict | None:
             return None
 
         # Total return (first to last price)
-        total_return_pct = float(((prices[-1] / prices[0]) - 1) * 100)
+        if prices[0] == 0 or abs(prices[0]) < 1e-10:
+            total_return_pct = 0.0
+        else:
+            total_return_pct = float(((prices[-1] / prices[0]) - 1) * 100)
 
         # Volatility (annualized)
         volatility_pct = calculate_volatility(returns, annualize=True, periods_per_year=365) * 100

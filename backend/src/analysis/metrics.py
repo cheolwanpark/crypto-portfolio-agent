@@ -194,11 +194,17 @@ def calculate_max_drawdown(value_series: np.ndarray | pd.Series) -> float:
     # Calculate running maximum (peak)
     running_max = np.maximum.accumulate(value_series)
 
-    # Calculate drawdown at each point
-    drawdown = (value_series - running_max) / running_max
+    # Calculate drawdown at each point (guard against zero division)
+    # Add small epsilon to avoid division by zero
+    running_max_safe = np.where(running_max == 0, 1e-10, running_max)
+    drawdown = (value_series - running_max) / running_max_safe
 
     # Maximum drawdown is the most negative value
     max_dd = np.min(drawdown)
+
+    # Ensure result is JSON-safe
+    if np.isinf(max_dd) or np.isnan(max_dd):
+        max_dd = 0.0
 
     logger.debug(f"Max Drawdown: {max_dd:.4f}")
 
@@ -234,12 +240,19 @@ def calculate_correlation_matrix(
     # Calculate correlation matrix
     corr_matrix = df.corr()
 
+    # Replace NaN values with 0 (happens when asset has zero variance)
+    corr_matrix = corr_matrix.fillna(0.0)
+
     # Convert to nested dict
     result = {}
     for asset1 in assets:
         result[asset1] = {}
         for asset2 in assets:
-            result[asset1][asset2] = float(corr_matrix.loc[asset1, asset2])
+            corr_val = float(corr_matrix.loc[asset1, asset2])
+            # Ensure JSON-safe value
+            if np.isinf(corr_val) or np.isnan(corr_val):
+                corr_val = 0.0
+            result[asset1][asset2] = corr_val
 
     logger.debug(f"Correlation matrix calculated for {len(assets)} assets")
 

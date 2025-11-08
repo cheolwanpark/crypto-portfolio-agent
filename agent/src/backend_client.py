@@ -1,23 +1,32 @@
 """Backend API client with retry logic and resilience."""
 
+import logging
 from typing import Any
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+logger = logging.getLogger(__name__)
+
 
 class BackendClient:
     """Client for calling backend API endpoints with retry logic."""
 
-    def __init__(self, base_url: str, http_client: httpx.AsyncClient):
+    def __init__(self, base_url: str, http_client: httpx.AsyncClient, api_key: str | None = None):
         """Initialize backend client.
 
         Args:
             base_url: Base URL of the backend API
             http_client: Shared async HTTP client
+            api_key: Optional API key for protected endpoints
         """
         self.base_url = base_url
         self.client = http_client
+        self.api_key = api_key
+
+        # Set default headers with API key if provided
+        if self.api_key:
+            self.client.headers["X-API-Key"] = self.api_key
 
     @retry(
         stop=stop_after_attempt(3),
@@ -48,6 +57,14 @@ class BackendClient:
         if data_types is None:
             data_types = ["spot", "futures"]
 
+        logger.debug(
+            "get_aggregated_stats called with assets=%s, start_date=%s, end_date=%s, data_types=%s",
+            assets,
+            start_date,
+            end_date,
+            data_types,
+        )
+
         if isinstance(assets, list):
             # Multi-asset endpoint
             url = f"{self.base_url}/api/v1/aggregated-stats/multi"
@@ -66,9 +83,30 @@ class BackendClient:
                 "data_types": ",".join(data_types),
             }
 
+        logger.debug("Making request to URL=%s with params=%s", url, params)
         response = await self.client.get(url, params=params, timeout=10.0)
+        logger.debug("Response status: %d", response.status_code)
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        logger.debug("Response JSON: %s", result)
+
+        # Log if response contains only null data
+        data = result.get("data", {})
+        if data:
+            all_null = all(
+                all(v is None for v in asset_data.values()) if isinstance(asset_data, dict) else True
+                for asset_data in data.values()
+            )
+            if all_null:
+                logger.warning(
+                    "Backend returned all-null data for assets=%s, date_range=%s to %s, data_types=%s",
+                    assets if isinstance(assets, str) else ",".join(assets),
+                    start_date,
+                    end_date,
+                    ",".join(data_types)
+                )
+
+        return result
 
     @retry(
         stop=stop_after_attempt(3),
@@ -92,12 +130,23 @@ class BackendClient:
         Raises:
             httpx.HTTPStatusError: If request fails after retries
         """
+        logger.debug(
+            "calculate_risk_profile called with %d positions, lookback_days=%d",
+            len(positions),
+            lookback_days,
+        )
+        logger.debug("Positions: %s", positions)
+
         url = f"{self.base_url}/api/v1/analysis/risk-profile"
         payload = {
             "positions": positions,
             "lookback_days": lookback_days,
         }
 
+        logger.debug("Making request to URL=%s with payload=%s", url, payload)
         response = await self.client.post(url, json=payload, timeout=30.0)
+        logger.debug("Response status: %d", response.status_code)
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        logger.debug("Response JSON: %s", result)
+        return result

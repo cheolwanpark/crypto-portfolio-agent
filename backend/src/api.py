@@ -829,13 +829,8 @@ async def get_aggregated_stats_multi(
             detail=f"Assets not tracked: {', '.join(invalid_assets)}. Available: {', '.join(settings.assets_list)}",
         )
 
-    # Validate date range (max 90 days)
+    # Validate date range
     period_days = (end - start).days
-    if period_days > 90:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Date range too large: {period_days} days (max 90 days)",
-        )
     if period_days < 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -929,6 +924,20 @@ async def get_aggregated_stats_multi(
         if len(multi_asset_ohlcv) >= 2:
             correlations = calculate_cross_asset_correlations(multi_asset_ohlcv)
 
+        # Check if all data is null and add warning
+        warnings = []
+        all_null = all(
+            all(v is None for v in asset_data.values()) if isinstance(asset_data, dict) else True
+            for asset_data in multi_asset_data.values()
+        )
+        if all_null:
+            warnings.append(
+                f"No data available for any requested assets ({', '.join(asset_list)}) "
+                f"in the date range {start.isoformat()} to {end.isoformat()}. "
+                "The database may not have data for this period. "
+                "Check if backfill has completed or try a more recent date range."
+            )
+
         return MultiAssetAggregatedStatsResponse(
             query={
                 "assets": asset_list,
@@ -938,6 +947,7 @@ async def get_aggregated_stats_multi(
             },
             data=multi_asset_data,
             correlations=correlations,
+            warnings=warnings if warnings else None,
             timestamp=datetime.now(timezone.utc),
         )
 
@@ -998,13 +1008,8 @@ async def get_aggregated_stats_single(
             detail=f"Asset '{asset}' not tracked. Available: {', '.join(settings.assets_list)}",
         )
 
-    # Validate date range (max 90 days)
+    # Validate date range
     period_days = (end - start).days
-    if period_days > 90:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Date range too large: {period_days} days (max 90 days)",
-        )
     if period_days < 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1074,12 +1079,23 @@ async def get_aggregated_stats_single(
                     if lending_stats_dict:
                         lending_stats = AggregatedLendingStats(**lending_stats_dict)
 
+        # Check if all data is null and add warning
+        warnings = []
+        if spot_stats is None and futures_stats is None and lending_stats is None:
+            warnings.append(
+                f"No data available for {asset_upper} in the date range "
+                f"{start.isoformat()} to {end.isoformat()}. "
+                "The database may not have data for this period. "
+                "Check if backfill has completed or try a more recent date range."
+            )
+
         return AggregatedStatsResponse(
             asset=asset_upper,
             query={"start": start, "end": end, "period_days": period_days},
             spot=spot_stats,
             futures=futures_stats,
             lending=lending_stats,
+            warnings=warnings if warnings else None,
             timestamp=datetime.now(timezone.utc),
         )
 
@@ -1154,6 +1170,7 @@ async def calculate_portfolio_risk_profile(
     - Data availability warnings (if any)
     """
     from src.analysis.riskprofile import calculate_risk_profile
+    from src.utils import sanitize_dict
 
     try:
         logger.info(
@@ -1170,9 +1187,13 @@ async def calculate_portfolio_risk_profile(
         # Calculate risk profile
         result = await calculate_risk_profile(request_data)
 
+        # Sanitize the result to ensure all float values are JSON-compliant
+        # This replaces any inf/-inf/NaN values with None
+        result = sanitize_dict(result)
+
         logger.info(
-            f"Risk profile calculated: portfolio_value=${result['current_portfolio_value']:,.2f}, "
-            f"VaR_95=${result['risk_metrics']['var_95_1day']:,.2f}"
+            f"Risk profile calculated: portfolio_value=${result.get('current_portfolio_value', 0):,.2f}, "
+            f"VaR_95=${result.get('risk_metrics', {}).get('var_95_1day', 0):,.2f}"
         )
 
         return RiskProfileResponse(**result)

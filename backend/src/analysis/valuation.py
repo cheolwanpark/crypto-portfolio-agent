@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from src.utils import MAX_HEALTH_FACTOR
+
 
 def calculate_spot_value(quantity: float, current_price: float) -> float:
     """
@@ -368,7 +370,7 @@ def calculate_health_factor(
         Health factor (>1 = safe, <1 = liquidation risk)
     """
     if total_borrowed <= 0:
-        return float("inf")  # No debt = infinite health
+        return MAX_HEALTH_FACTOR  # No debt = maximum health (JSON-safe value)
 
     weighted_collateral = 0.0
     for pos in positions:

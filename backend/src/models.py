@@ -721,6 +721,9 @@ class AggregatedStatsResponse(BaseModel):
     lending: AggregatedLendingStats | None = Field(
         default=None, description="Lending market statistics (null if unavailable)"
     )
+    warnings: list[str] | None = Field(
+        default=None, description="Warnings about data availability or quality issues"
+    )
     timestamp: datetime = Field(description="Response generation timestamp (UTC)")
 
 
@@ -733,5 +736,8 @@ class MultiAssetAggregatedStatsResponse(BaseModel):
     )
     correlations: dict[str, dict[str, float]] | None = Field(
         default=None, description="Cross-asset correlation matrix (null if unavailable)"
+    )
+    warnings: list[str] | None = Field(
+        default=None, description="Warnings about data availability or quality issues"
     )
     timestamp: datetime = Field(description="Response generation timestamp (UTC)")

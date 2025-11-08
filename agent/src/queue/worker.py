@@ -48,7 +48,11 @@ def process_chat_request(
 
     # Create HTTP client for backend
     httpx_client = httpx.AsyncClient()
-    backend_client = BackendClient(settings.backend_api_url, httpx_client)
+    backend_client = BackendClient(
+        settings.backend_api_url,
+        httpx_client,
+        api_key=settings.backend_api_key if settings.backend_api_key else None,
+    )
 
     try:
         # Mark as processing

@@ -308,27 +308,26 @@ class BaseTool:
 
     def _wrap_tool_result(self, result: Any) -> ToolResult:
         """Normalize tool handler return values into MCP-compatible payloads."""
+        import json as json_module
+
         if isinstance(result, dict) and "content" in result:
             return result
 
-        if isinstance(result, Mapping):
-            payload = {"type": "json", "data": dict(result)}
-        elif isinstance(result, (list, tuple, set)):
-            payload = {"type": "json", "data": {"items": list(result)}}
-        elif isinstance(result, Sequence) and not isinstance(result, (str, bytes, bytearray)):
-            payload = {"type": "json", "data": {"items": list(result)}}
+        # Convert all results to text format (not json type, as SDK may not support it)
+        text: str
+        if isinstance(result, str):
+            text = result
+        elif isinstance(result, bytes):
+            text = result.decode("utf-8", errors="replace")
+        elif result is None:
+            text = ""
+        elif isinstance(result, (Mapping, list, tuple, set)):
+            # Convert structured data to formatted JSON string
+            text = json_module.dumps(result, indent=2, ensure_ascii=False)
         else:
-            text: str
-            if isinstance(result, str):
-                text = result
-            elif isinstance(result, bytes):
-                text = result.decode("utf-8", errors="replace")
-            elif result is None:
-                text = ""
-            else:
-                text = str(result)
-            payload = {"type": "text", "text": text}
+            text = str(result)
 
+        payload = {"type": "text", "text": text}
         return {"content": [payload]}
 
     def _wrap_tool_error(self, error: Exception) -> ToolResult:
