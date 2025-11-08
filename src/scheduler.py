@@ -317,6 +317,10 @@ async def run_scheduler() -> None:
         logger.info("Running immediate futures fetch on startup...")
         await service.futures_fetch_job()
 
+        if service.lending_fetcher:
+            logger.info("Running immediate lending fetch on startup...")
+            await service.lending_fetch_job()
+
         # Keep running until shutdown signal
         logger.info("Scheduler is now running. Press Ctrl+C to stop.")
         await shutdown_event.wait()
