@@ -10,7 +10,7 @@ from src.api.service import (
     get_portfolio_service,
     list_chats_service,
 )
-from src.models import ChatCreateRequest, ChatRecord, FollowupRequest
+from src.models import ChatCreateRequest, ChatRecord, ChatSummary, FollowupRequest
 from src.queue.queue import QueueConfig, create_queue
 from src.storage.chat_store import ChatStore
 from src.storage.redis_client import create_redis_client
@@ -111,13 +111,16 @@ async def create_chat(
     return create_chat_service(request, queue, chat_store)
 
 
-@router.get("/chat", response_model=list[ChatRecord])
+@router.get("/chat", response_model=list[ChatSummary])
 async def list_chats(
     limit: int = 50,
     offset: int = 0,
     chat_store: ChatStore = Depends(get_chat_store),
-) -> list[ChatRecord]:
-    """List all chats with pagination (newest first).
+) -> list[ChatSummary]:
+    """List all chats with pagination (newest first, concise summaries only).
+
+    Returns concise chat summaries without full message history, reasonings, or toolcalls.
+    Use GET /chat/{chat_id} to fetch the full chat record with all details.
 
     Args:
         limit: Maximum number of chats to return (default: 50)
@@ -125,7 +128,7 @@ async def list_chats(
         chat_store: Chat storage (injected)
 
     Returns:
-        List of chat records
+        List of concise chat summaries
     """
     if limit < 1 or limit > 100:
         raise HTTPException(400, "limit must be between 1 and 100")

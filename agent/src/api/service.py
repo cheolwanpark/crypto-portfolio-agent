@@ -5,7 +5,7 @@ import uuid
 
 from rq import Queue
 
-from src.models import ChatCreateRequest, ChatRecord, FollowupRequest
+from src.models import ChatCreateRequest, ChatRecord, ChatSummary, FollowupRequest
 from src.queue.worker import process_chat_request
 from src.storage.chat_store import ChatStore
 
@@ -52,8 +52,8 @@ def list_chats_service(
     chat_store: ChatStore,
     limit: int = 50,
     offset: int = 0,
-) -> list[ChatRecord]:
-    """List chats with pagination.
+) -> list[ChatSummary]:
+    """List chats with pagination (concise summaries only).
 
     Args:
         chat_store: Chat storage
@@ -61,9 +61,28 @@ def list_chats_service(
         offset: Offset for pagination
 
     Returns:
-        List of chat records
+        List of concise chat summaries
     """
-    return chat_store.list_chats(limit=limit, offset=offset)
+    records = chat_store.list_chats(limit=limit, offset=offset)
+
+    # Convert to concise summaries
+    summaries = []
+    for record in records:
+        summaries.append(
+            ChatSummary(
+                id=record.id,
+                status=record.status,
+                strategy=record.strategy,
+                target_apy=record.target_apy,
+                max_drawdown=record.max_drawdown,
+                has_portfolio=record.portfolio is not None,
+                message_count=len(record.messages),
+                created_at=record.created_at,
+                updated_at=record.updated_at,
+            )
+        )
+
+    return summaries
 
 
 def get_chat_service(
@@ -99,16 +118,24 @@ def get_portfolio_service(
         chat_store: Chat storage
 
     Returns:
-        Portfolio dict
+        Portfolio dict with all versions (DESC by timestamp, latest first)
 
     Raises:
         ValueError: If chat not found
     """
     record = get_chat_service(chat_id, chat_store)
 
+    # Sort portfolio versions by timestamp (latest first)
+    sorted_versions = sorted(
+        record.portfolio_versions,
+        key=lambda v: v.timestamp,
+        reverse=True
+    )
+
     return {
         "chat_id": chat_id,
-        "portfolio": record.portfolio,
+        "portfolio_versions": [v.model_dump() for v in sorted_versions],
+        "latest_portfolio": record.portfolio,
         "has_portfolio": record.portfolio is not None,
     }
 

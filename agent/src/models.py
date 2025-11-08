@@ -6,6 +6,20 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
+class ChatSummary(BaseModel):
+    """Concise chat summary for list endpoints."""
+
+    id: str
+    status: Literal["queued", "processing", "completed", "failed", "timeout"]
+    strategy: str
+    target_apy: float
+    max_drawdown: float
+    has_portfolio: bool
+    message_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
 class ChatCreateRequest(BaseModel):
     """Request model for creating a new chat."""
 
@@ -56,7 +70,8 @@ class ChatMessage(BaseModel):
 
     type: Literal["user", "agent"]
     message: str
-    reasonings: list[str] = Field(default_factory=list)
+    reasonings: list[dict] = Field(default_factory=list)
+    toolcalls: list[dict] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 

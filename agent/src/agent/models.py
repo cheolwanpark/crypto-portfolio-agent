@@ -44,4 +44,5 @@ class ToolContext:
         self.backend_client = backend_client
         self.chat_store = chat_store
         self.current_portfolio = current_portfolio
-        self.reasonings: list[str] = []
+        self.reasonings: list[dict] = []
+        self.toolcalls: list[dict] = []

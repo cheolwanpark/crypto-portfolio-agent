@@ -1,5 +1,6 @@
 """Reasoning step tool for transparent decision tracking."""
 
+from datetime import datetime
 from typing import Annotated, Any, Dict
 
 from src.agent.models import ToolContext
@@ -63,8 +64,12 @@ class ReasoningTools(BaseTool):
                 "hint": "Provide detailed explanation of your reasoning, analysis, and decisions."
             }
 
-        # Format the reasoning entry
-        reasoning_entry = f"{brief_summary}\n\n{reasoning_detail}"
+        # Create structured reasoning entry with timestamp
+        reasoning_entry = {
+            "summary": brief_summary,
+            "detail": reasoning_detail,
+            "timestamp": datetime.utcnow().isoformat()
+        }
 
         # Store in context (for agent's internal use)
         self.context.reasonings.append(reasoning_entry)
@@ -86,5 +91,6 @@ class ReasoningTools(BaseTool):
             "success": True,
             "message": "Reasoning step recorded successfully (visible in real-time via GET API)",
             "brief_summary": brief_summary,
+            "timestamp": reasoning_entry["timestamp"],
             "total_reasoning_steps": len(self.context.reasonings),
         }

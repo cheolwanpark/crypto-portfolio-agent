@@ -1,6 +1,8 @@
 """Risk profile calculation tool for portfolio analysis."""
 
 import json
+import logging
+from datetime import datetime
 from typing import Annotated, Any, Dict
 
 from src.agent.models import ToolContext
@@ -12,6 +14,8 @@ from src.agent.tools._validation import (
     validate_position,
 )
 from src.wrapper import BaseTool, tool
+
+logger = logging.getLogger(__name__)
 
 
 class RiskProfileTools(BaseTool):
@@ -126,12 +130,41 @@ Example: [{"asset": "BTC", "quantity": 1.5, "position_type": "spot", "entry_pric
                 ]
             }
 
+        # Log tool call inputs
+        tool_inputs = {
+            "positions": positions,
+            "lookback_days": lookback_days,
+        }
+
+        # Create concise message
+        tool_message = "[tool] check risk profile"
+
         try:
             # Call backend
             result = await self.context.backend_client.calculate_risk_profile(
                 positions=positions,
                 lookback_days=lookback_days,
             )
+
+            # Log successful tool call
+            toolcall_log = {
+                "tool_name": "calculate_risk_profile",
+                "message": tool_message,
+                "timestamp": datetime.utcnow().isoformat(),
+                "inputs": tool_inputs,
+                "outputs": result,
+                "status": "success"
+            }
+            self.context.toolcalls.append(toolcall_log)
+
+            # Write to Redis immediately for real-time visibility
+            try:
+                self.context.chat_store.append_toolcall(
+                    chat_id=self.context.chat_id,
+                    toolcall=toolcall_log
+                )
+            except Exception as log_error:
+                logger.error(f"Failed to write toolcall to Redis: {log_error}")
 
             return result
 
@@ -148,9 +181,31 @@ Example: [{"asset": "BTC", "quantity": 1.5, "position_type": "spot", "entry_pric
                 except:
                     pass
 
-            return {
+            error_output = {
                 "error": f"Backend API error: {error_detail}",
                 "requested_positions_count": len(positions),
                 "requested_lookback_days": lookback_days,
                 "hint": "Check the error message above. The backend may be unable to calculate risk for this portfolio."
             }
+
+            # Log failed tool call
+            toolcall_log = {
+                "tool_name": "calculate_risk_profile",
+                "message": tool_message,
+                "timestamp": datetime.utcnow().isoformat(),
+                "inputs": tool_inputs,
+                "outputs": error_output,
+                "status": "error"
+            }
+            self.context.toolcalls.append(toolcall_log)
+
+            # Write to Redis
+            try:
+                self.context.chat_store.append_toolcall(
+                    chat_id=self.context.chat_id,
+                    toolcall=toolcall_log
+                )
+            except Exception as log_error:
+                logger.error(f"Failed to write toolcall to Redis: {log_error}")
+
+            return error_output

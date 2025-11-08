@@ -73,7 +73,24 @@ class ChatStore:
             Updated chat record
         """
         record = self._get_record(chat_id)
-        record.messages.extend(agent_messages)
+
+        # Check if last message is a placeholder that was updated by reasonings/toolcalls
+        if (agent_messages
+            and record.messages
+            and record.messages[-1].type == "agent"
+            and record.messages[-1].message == "[Agent is thinking...]"):
+
+            # UPDATE the same placeholder message that has reasonings/toolcalls
+            # Only change the message text, preserving all accumulated reasonings/toolcalls
+            record.messages[-1].message = agent_messages[0].message
+
+            # If there are additional messages beyond the first, append them
+            if len(agent_messages) > 1:
+                record.messages.extend(agent_messages[1:])
+        else:
+            # No placeholder exists, append normally (backward compatibility)
+            record.messages.extend(agent_messages)
+
         if portfolio is not None:
             record.portfolio = portfolio
         record.status = status
@@ -116,14 +133,14 @@ class ChatStore:
         self._write_record(record)
         return record
 
-    def append_reasoning(self, chat_id: str, reasoning: str) -> ChatRecord:
+    def append_reasoning(self, chat_id: str, reasoning: dict) -> ChatRecord:
         """Append reasoning to the latest agent message (real-time streaming).
 
         Creates a placeholder agent message if none exists yet.
 
         Args:
             chat_id: Chat identifier
-            reasoning: Reasoning text to append
+            reasoning: Reasoning dict with 'summary', 'detail', and 'timestamp'
 
         Returns:
             Updated chat record
@@ -141,6 +158,39 @@ class ChatStore:
                     type="agent",
                     message="[Agent is thinking...]",
                     reasonings=[reasoning],
+                    timestamp=datetime.utcnow(),
+                )
+            )
+
+        record.updated_at = datetime.utcnow()
+        self._write_record(record)
+        return record
+
+    def append_toolcall(self, chat_id: str, toolcall: dict) -> ChatRecord:
+        """Append tool call to the latest agent message (real-time streaming).
+
+        Creates a placeholder agent message if none exists yet.
+
+        Args:
+            chat_id: Chat identifier
+            toolcall: Tool call log dictionary containing tool_name, message, inputs, outputs, status, timestamp
+
+        Returns:
+            Updated chat record
+        """
+        record = self._get_record(chat_id)
+
+        # Find latest agent message or create placeholder
+        if record.messages and record.messages[-1].type == "agent":
+            # Append to existing agent message
+            record.messages[-1].toolcalls.append(toolcall)
+        else:
+            # Create new placeholder agent message
+            record.messages.append(
+                ChatMessage(
+                    type="agent",
+                    message="[Agent is thinking...]",
+                    toolcalls=[toolcall],
                     timestamp=datetime.utcnow(),
                 )
             )

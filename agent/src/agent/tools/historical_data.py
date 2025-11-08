@@ -1,6 +1,7 @@
 """Historical data retrieval tool for crypto assets."""
 
 import logging
+from datetime import datetime
 from typing import Annotated, Any, Dict
 
 from src.agent.models import ToolContext
@@ -103,6 +104,18 @@ class HistoricalDataTools(BaseTool):
                 "hint": "Use ISO 8601 UTC format like '2025-01-01T00:00:00Z'. Include the 'T' separator and 'Z' timezone."
             }
 
+        # Log tool call inputs
+        tool_inputs = {
+            "assets": asset_list,
+            "start_date": start_date,
+            "end_date": end_date,
+            "data_types": data_type_list,
+        }
+
+        # Create concise message
+        asset_display = ", ".join(asset_list)
+        tool_message = f"[tool] searching {asset_display}"
+
         try:
             # Call backend
             result = await self.context.backend_client.get_aggregated_stats(
@@ -111,6 +124,26 @@ class HistoricalDataTools(BaseTool):
                 end_date=end_date,
                 data_types=data_type_list,
             )
+
+            # Log successful tool call
+            toolcall_log = {
+                "tool_name": "get_aggregated_stats",
+                "message": tool_message,
+                "timestamp": datetime.utcnow().isoformat(),
+                "inputs": tool_inputs,
+                "outputs": result,
+                "status": "success"
+            }
+            self.context.toolcalls.append(toolcall_log)
+
+            # Write to Redis immediately for real-time visibility
+            try:
+                self.context.chat_store.append_toolcall(
+                    chat_id=self.context.chat_id,
+                    toolcall=toolcall_log
+                )
+            except Exception as log_error:
+                logger.error(f"Failed to write toolcall to Redis: {log_error}")
 
             # Check if result contains any actual data
             data = result.get("data", {})
@@ -146,9 +179,31 @@ class HistoricalDataTools(BaseTool):
                 except:
                     pass
 
-            return {
+            error_output = {
                 "error": f"Backend API error: {error_detail}",
                 "requested_assets": asset_list,
                 "requested_date_range": f"{start_date} to {end_date}",
                 "hint": "Check the error message above and adjust your parameters accordingly."
             }
+
+            # Log failed tool call
+            toolcall_log = {
+                "tool_name": "get_aggregated_stats",
+                "message": tool_message,
+                "timestamp": datetime.utcnow().isoformat(),
+                "inputs": tool_inputs,
+                "outputs": error_output,
+                "status": "error"
+            }
+            self.context.toolcalls.append(toolcall_log)
+
+            # Write to Redis
+            try:
+                self.context.chat_store.append_toolcall(
+                    chat_id=self.context.chat_id,
+                    toolcall=toolcall_log
+                )
+            except Exception as log_error:
+                logger.error(f"Failed to write toolcall to Redis: {log_error}")
+
+            return error_output
