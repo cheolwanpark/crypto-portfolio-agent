@@ -840,28 +840,36 @@ async def init_lending_schemas() -> None:
     """Initialize all lending-related database schemas."""
     logger.info("Initializing lending database schemas")
 
-    # Lendings table (event-based data from Aave)
+    # Lendings table (Dune Analytics data)
     create_lendings_table = """
     CREATE TABLE IF NOT EXISTS lendings (
         id SERIAL PRIMARY KEY,
         asset VARCHAR(20) NOT NULL,
         timestamp TIMESTAMPTZ NOT NULL,
+        reserve_address VARCHAR(42) NOT NULL,
         supply_rate_ray NUMERIC(80, 27) NOT NULL,
         variable_borrow_rate_ray NUMERIC(80, 27) NOT NULL,
         stable_borrow_rate_ray NUMERIC(80, 27) NOT NULL,
-        total_supplied NUMERIC(30, 8) NOT NULL,
-        available_liquidity NUMERIC(30, 8) NOT NULL,
-        total_borrowed NUMERIC(30, 8) NOT NULL,
-        utilization_rate NUMERIC(10, 8) NOT NULL,
-        price_eth NUMERIC(20, 8),
-        price_usd NUMERIC(20, 8),
-        UNIQUE(asset, timestamp)
+        liquidity_index NUMERIC(80, 27) NOT NULL,
+        variable_borrow_index NUMERIC(80, 27) NOT NULL,
+        UNIQUE(asset, timestamp),
+        CHECK (supply_rate_ray >= 0 AND supply_rate_ray <= 2e27),
+        CHECK (variable_borrow_rate_ray >= 0 AND variable_borrow_rate_ray <= 2e27),
+        CHECK (stable_borrow_rate_ray >= 0 AND stable_borrow_rate_ray <= 2e27),
+        CHECK (liquidity_index >= 1e27 AND liquidity_index <= 1e30),
+        CHECK (variable_borrow_index >= 1e27 AND variable_borrow_index <= 1e30),
+        CHECK (reserve_address ~ '^0x[a-fA-F0-9]{40}$')
     );
     """
 
     create_lendings_index = """
     CREATE INDEX IF NOT EXISTS idx_lendings_asset_timestamp
     ON lendings(asset, timestamp DESC);
+    """
+
+    create_lendings_reserve_index = """
+    CREATE INDEX IF NOT EXISTS idx_lendings_reserve_address
+    ON lendings(reserve_address);
     """
 
     # Lending backfill state table
@@ -877,6 +885,7 @@ async def init_lending_schemas() -> None:
     async with get_connection() as conn:
         await conn.execute(create_lendings_table)
         await conn.execute(create_lendings_index)
+        await conn.execute(create_lendings_reserve_index)
         await conn.execute(create_lending_backfill_table)
 
     logger.info("Lending database schemas initialized successfully")
@@ -887,7 +896,7 @@ async def init_lending_schemas() -> None:
 
 def validate_lending_data(data: dict) -> bool:
     """
-    Validate lending data for sanity checks.
+    Validate lending data for sanity checks (Dune Analytics format).
 
     Args:
         data: Dict with lending data fields
@@ -899,34 +908,32 @@ def validate_lending_data(data: dict) -> bool:
         ValueError: If validation fails with details
     """
     try:
-        # Rates must be non-negative
-        if float(data["supply_rate_ray"]) < 0:
-            raise ValueError("Supply rate cannot be negative")
-        if float(data["variable_borrow_rate_ray"]) < 0:
-            raise ValueError("Variable borrow rate cannot be negative")
-        if float(data["stable_borrow_rate_ray"]) < 0:
-            raise ValueError("Stable borrow rate cannot be negative")
+        # Rates must be non-negative and within reasonable range (0 to 2e27 = 0-200% APY)
+        supply_rate = float(data["supply_rate_ray"])
+        if supply_rate < 0 or supply_rate > 2e27:
+            raise ValueError(f"Supply rate out of range (0-200% APY): {supply_rate}")
 
-        # Utilization rate must be between 0 and 1
-        util_rate = float(data["utilization_rate"])
-        if not 0 <= util_rate <= 1:
-            raise ValueError(f"Utilization rate must be 0-1, got {util_rate}")
+        variable_rate = float(data["variable_borrow_rate_ray"])
+        if variable_rate < 0 or variable_rate > 2e27:
+            raise ValueError(f"Variable borrow rate out of range (0-200% APY): {variable_rate}")
 
-        # Total borrowed cannot exceed total supplied
-        total_supplied = float(data["total_supplied"])
-        total_borrowed = float(data["total_borrowed"])
-        # Use relative tolerance (0.01% of supply)
-        tolerance = max(total_supplied * 0.0001, 0.01)  # At least 0.01 for small pools
-        if total_borrowed > total_supplied + tolerance:
-            raise ValueError(f"Total borrowed ({total_borrowed}) exceeds total supplied ({total_supplied})")
+        stable_rate = float(data["stable_borrow_rate_ray"])
+        if stable_rate < 0 or stable_rate > 2e27:
+            raise ValueError(f"Stable borrow rate out of range (0-200% APY): {stable_rate}")
 
-        # Amounts must be non-negative
-        if total_supplied < 0:
-            raise ValueError("Total supplied cannot be negative")
-        if total_borrowed < 0:
-            raise ValueError("Total borrowed cannot be negative")
-        if float(data["available_liquidity"]) < 0:
-            raise ValueError("Available liquidity cannot be negative")
+        # Indices must be within reasonable range (typically 1e27 to 1e30)
+        liquidity_index = float(data["liquidity_index"])
+        if liquidity_index < 1e27 or liquidity_index > 1e30:
+            raise ValueError(f"Liquidity index out of range: {liquidity_index}")
+
+        variable_borrow_index = float(data["variable_borrow_index"])
+        if variable_borrow_index < 1e27 or variable_borrow_index > 1e30:
+            raise ValueError(f"Variable borrow index out of range: {variable_borrow_index}")
+
+        # Validate reserve address format (Ethereum address)
+        reserve = data.get("reserve_address", "")
+        if not reserve.startswith("0x") or len(reserve) != 42:
+            raise ValueError(f"Invalid reserve address format: {reserve}")
 
         return True
     except (KeyError, ValueError, TypeError) as e:
@@ -939,11 +946,11 @@ def validate_lending_data(data: dict) -> bool:
 
 async def upsert_lending_batch(asset: str, events: list[dict]) -> int:
     """
-    Insert or update lending events for an asset using efficient batch operations.
+    Insert or update lending data for an asset using efficient batch operations.
 
     Args:
-        asset: Asset symbol (e.g., 'WETH', 'WBTC', 'USDC')
-        events: List of dicts with lending data fields
+        asset: Asset symbol (e.g., 'DAI', 'USDC', 'WETH')
+        events: List of dicts with lending data fields (from Dune Analytics)
 
     Returns:
         Number of rows inserted/updated
@@ -957,22 +964,18 @@ async def upsert_lending_batch(asset: str, events: list[dict]) -> int:
 
     query = """
     INSERT INTO lendings (
-        asset, timestamp, supply_rate_ray, variable_borrow_rate_ray, stable_borrow_rate_ray,
-        total_supplied, available_liquidity, total_borrowed, utilization_rate,
-        price_eth, price_usd
+        asset, timestamp, reserve_address, supply_rate_ray, variable_borrow_rate_ray,
+        stable_borrow_rate_ray, liquidity_index, variable_borrow_index
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     ON CONFLICT (asset, timestamp)
     DO UPDATE SET
+        reserve_address = EXCLUDED.reserve_address,
         supply_rate_ray = EXCLUDED.supply_rate_ray,
         variable_borrow_rate_ray = EXCLUDED.variable_borrow_rate_ray,
         stable_borrow_rate_ray = EXCLUDED.stable_borrow_rate_ray,
-        total_supplied = EXCLUDED.total_supplied,
-        available_liquidity = EXCLUDED.available_liquidity,
-        total_borrowed = EXCLUDED.total_borrowed,
-        utilization_rate = EXCLUDED.utilization_rate,
-        price_eth = EXCLUDED.price_eth,
-        price_usd = EXCLUDED.price_usd
+        liquidity_index = EXCLUDED.liquidity_index,
+        variable_borrow_index = EXCLUDED.variable_borrow_index
     """
 
     # Prepare batch data
@@ -980,15 +983,12 @@ async def upsert_lending_batch(asset: str, events: list[dict]) -> int:
         (
             asset,
             event["timestamp"],
+            event["reserve_address"],
             event["supply_rate_ray"],
             event["variable_borrow_rate_ray"],
             event["stable_borrow_rate_ray"],
-            event["total_supplied"],
-            event["available_liquidity"],
-            event["total_borrowed"],
-            event["utilization_rate"],
-            event.get("price_eth"),
-            event.get("price_usd"),
+            event["liquidity_index"],
+            event["variable_borrow_index"],
         )
         for event in events
     ]
@@ -1019,12 +1019,11 @@ async def get_lending_data(
         limit: Maximum number of rows to return
 
     Returns:
-        List of dicts with lending data (all fields including RAY rates)
+        List of dicts with lending data (new Dune Analytics schema)
     """
     query_parts = [
-        """SELECT timestamp, supply_rate_ray, variable_borrow_rate_ray, stable_borrow_rate_ray,
-        total_supplied, available_liquidity, total_borrowed, utilization_rate,
-        price_eth, price_usd
+        """SELECT timestamp, reserve_address, supply_rate_ray, variable_borrow_rate_ray,
+        stable_borrow_rate_ray, liquidity_index, variable_borrow_index
         FROM lendings WHERE asset = $1"""
     ]
     params = [asset]

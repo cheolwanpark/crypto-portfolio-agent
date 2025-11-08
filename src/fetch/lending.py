@@ -1,231 +1,174 @@
-"""Lending data fetcher for Aave protocol with event-based storage."""
+"""Lending data fetcher using Dune Analytics."""
 
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from datetime import datetime, timezone
 
 from loguru import logger
 
 from src.config import settings
-from src.database import (
-    get_earliest_lending_timestamp,
-    get_latest_lending_timestamp,
-    get_ohlcv_data,
-    upsert_lending_batch,
-)
-from src.fetch.aave_client import AaveClient
+from src.database import upsert_lending_batch
+from src.fetch.dune_client import DuneClient
 
 
 class LendingFetcher:
-    """Fetcher for Aave lending data (event-based)."""
+    """Fetcher for lending market data from Dune Analytics."""
 
-    def __init__(self, aave_client: AaveClient):
+    def __init__(self, dune_client: DuneClient):
         """
         Initialize lending fetcher.
 
         Args:
-            aave_client: Configured AaveClient instance
+            dune_client: Configured DuneClient instance
         """
-        self.client = aave_client
+        self.client = dune_client
 
-    async def _get_eth_usd_price(self) -> Decimal | None:
+    def _validate_lending_data(self, data_dict: dict) -> bool:
         """
-        Get current ETH/USD price from spot OHLCV data.
-
-        Returns:
-            ETH/USDT price as Decimal (approximation of USD), or None if not available
-
-        Note:
-            Uses ETH/USDT pair from spot data. USDT aims for 1:1 USD peg but
-            may deviate slightly. For historical events, this returns the CURRENT
-            ETH price, not the price at the event timestamp.
-        """
-        try:
-            # Query latest ETH price from spot data
-            # NOTE: get_ohlcv_data() sorts ASC, so we need to get the latest ourselves
-            from src.database import get_latest_timestamp
-
-            latest_ts = await get_latest_timestamp("ETH")
-            if not latest_ts:
-                logger.warning("No ETH spot data available for price calculation")
-                return None
-
-            # Query data at latest timestamp
-            eth_data = await get_ohlcv_data(
-                asset="ETH", start_time=latest_ts, limit=1
-            )
-
-            if eth_data and len(eth_data) > 0:
-                latest = eth_data[0]
-                # Use close price
-                eth_price = Decimal(str(latest["close"]))
-                logger.debug(f"Fetched ETH/USDT price: {eth_price}")
-                return eth_price
-            else:
-                logger.warning("No ETH spot data available for price calculation")
-                return None
-
-        except Exception as e:
-            logger.warning(f"Failed to fetch ETH/USD price: {e}")
-            return None
-
-    async def fetch_new_events(self, asset: str) -> int:
-        """
-        Fetch new lending events since last stored timestamp.
-
-        This is the event-driven equivalent of fetch_latest() for spot data.
-        Instead of fetching fixed intervals, we query for new events that
-        occurred since our last data point.
+        Validate lending data before database insertion.
 
         Args:
-            asset: Asset symbol (e.g., 'WETH', 'USDC')
+            data_dict: Data dictionary from DuneLendingData.to_dict()
 
         Returns:
-            Number of new events stored
+            True if valid, False otherwise
         """
         try:
-            # Get latest stored timestamp
-            latest_timestamp = await get_latest_lending_timestamp(asset)
+            # Check timestamp is not in future
+            if data_dict["timestamp"] > datetime.now(timezone.utc):
+                logger.warning(f"Future timestamp detected: {data_dict['timestamp']}")
+                return False
 
-            if latest_timestamp:
-                # Fetch events after latest timestamp
-                after_unix = int(latest_timestamp.timestamp())
-                logger.info(
-                    f"Fetching new {asset} lending events after {latest_timestamp.isoformat()}"
-                )
-            else:
-                # No data yet, this will be handled by backfill
-                logger.info(f"No existing data for {asset}, use backfill for initial data")
-                return 0
+            # Check reserve address format (basic Ethereum address validation)
+            reserve = data_dict.get("reserve_address", "")
+            if not reserve.startswith("0x") or len(reserve) != 42:
+                logger.warning(f"Invalid reserve address format: {reserve}")
+                return False
 
-            # Query Aave for new events
-            events = await self.client.query_reserve_events(
-                symbol=asset, after_timestamp=after_unix, limit=1000
-            )
+            # Check RAY rates are positive and within reasonable range (0 to 2e27 = 0% to 200%)
+            for rate_field in [
+                "supply_rate_ray",
+                "variable_borrow_rate_ray",
+                "stable_borrow_rate_ray",
+            ]:
+                rate_str = data_dict.get(rate_field, "0")
+                rate_int = int(rate_str)
+                if rate_int < 0 or rate_int > 2e27:
+                    logger.warning(
+                        f"Rate {rate_field} out of range (0-200% APY): {rate_int}"
+                    )
+                    return False
 
-            if not events:
-                logger.info(f"No new events for {asset}")
-                return 0
+            # Check indices are within reasonable range (typically 1e27 to 1e30)
+            for index_field in ["liquidity_index", "variable_borrow_index"]:
+                index_str = data_dict.get(index_field, "0")
+                index_int = int(index_str)
+                if index_int < 1e27 or index_int > 1e30:
+                    logger.warning(f"Index {index_field} out of range: {index_int}")
+                    return False
 
-            # Get ETH/USD price for price_usd calculation
-            eth_usd_price = await self._get_eth_usd_price()
+            return True
 
-            # Convert to database format
-            event_dicts = [event.to_dict(eth_usd_price=eth_usd_price) for event in events]
+        except (ValueError, TypeError, KeyError) as e:
+            logger.error(f"Validation error: {e}")
+            return False
 
-            # Store to database
-            stored_count = await upsert_lending_batch(asset, event_dicts)
-
-            logger.info(f"Stored {stored_count} new lending events for {asset}")
-
-            return stored_count
-
-        except Exception as e:
-            logger.error(f"Error fetching new events for {asset}: {e}")
-            raise
-
-    async def fetch_all_new_events(self) -> dict[str, int]:
+    async def fetch_dune_lending(self, max_age_hours: int = 24) -> dict[str, int]:
         """
-        Fetch new events for all tracked lending assets.
+        Fetch lending market data from Dune Analytics.
 
-        Isolates errors per asset to prevent one failure from blocking others.
-
-        Returns:
-            Dict mapping asset to number of events fetched
-        """
-        results = {}
-
-        for asset in settings.lending_assets_list:
-            try:
-                count = await self.fetch_new_events(asset)
-                results[asset] = count
-            except Exception as e:
-                logger.error(f"Failed to fetch new events for {asset}: {e}")
-                results[asset] = 0
-
-        total = sum(results.values())
-        logger.info(
-            f"Fetch new events complete: {total} total events across {len(results)} assets"
-        )
-
-        return results
-
-    async def backfill_events(
-        self, asset: str, start_date: datetime, end_date: datetime
-    ) -> int:
-        """
-        Backfill historical lending events for a time range.
-
-        Unlike spot data which has fixed intervals, Aave events are irregular.
-        We fetch all events in the range and store them as-is.
+        Unlike the previous event-based Aave fetching, Dune provides
+        pre-aggregated data snapshots (typically daily).
 
         Args:
-            asset: Asset symbol (e.g., 'WETH', 'USDC')
-            start_date: Start datetime (inclusive)
-            end_date: End datetime (inclusive)
+            max_age_hours: Maximum age of cached Dune results (hours)
 
         Returns:
-            Total number of events stored
+            Dict mapping asset to number of data points stored
         """
         try:
+            logger.info(f"Fetching lending data from Dune (max_age={max_age_hours}h)")
+
+            # Fetch all lending data from Dune
+            lending_data_list = self.client.get_lending_data(max_age_hours=max_age_hours)
+
+            if not lending_data_list:
+                logger.warning("No lending data returned from Dune")
+                return {}
+
+            # Group data by asset
+            data_by_asset: dict[str, list[dict]] = {}
+
+            for lending_data in lending_data_list:
+                asset = lending_data.symbol
+                data_dict = lending_data.to_dict()
+
+                # Validate data
+                if not self._validate_lending_data(data_dict):
+                    logger.warning(f"Skipping invalid data for {asset}: {data_dict}")
+                    continue
+
+                if asset not in data_by_asset:
+                    data_by_asset[asset] = []
+
+                data_by_asset[asset].append(data_dict)
+
+            # Store data for each asset
+            results = {}
+
+            for asset, data_list in data_by_asset.items():
+                try:
+                    logger.info(f"Storing {len(data_list)} data points for {asset}")
+
+                    # Batch upsert to database
+                    stored_count = await upsert_lending_batch(asset, data_list)
+                    results[asset] = stored_count
+
+                    logger.info(f"Stored {stored_count} data points for {asset}")
+
+                except Exception as e:
+                    logger.error(f"Failed to store lending data for {asset}: {e}")
+                    results[asset] = 0
+
+            total = sum(results.values())
             logger.info(
-                f"Backfilling {asset} lending events from {start_date.date()} to {end_date.date()}"
+                f"Dune fetch complete: {total} total data points across {len(results)} assets"
             )
 
-            # Get ETH/USD price for price_usd calculation
-            eth_usd_price = await self._get_eth_usd_price()
-
-            total_stored = 0
-            current_after = int(start_date.timestamp())
-            end_unix = int(end_date.timestamp())
-
-            # Pagination loop (The Graph limits to 1000 items per query)
-            while current_after < end_unix:
-                events = await self.client.query_reserve_events(
-                    symbol=asset, after_timestamp=current_after, limit=1000
-                )
-
-                if not events:
-                    # No more events
-                    break
-
-                # Filter events within end_date
-                events_in_range = [
-                    event for event in events if event.timestamp <= end_unix
-                ]
-
-                if not events_in_range:
-                    break
-
-                # Convert to database format
-                event_dicts = [
-                    event.to_dict(eth_usd_price=eth_usd_price) for event in events_in_range
-                ]
-
-                # Store to database
-                stored_count = await upsert_lending_batch(asset, event_dicts)
-                total_stored += stored_count
-
-                logger.info(
-                    f"Stored {stored_count} events for {asset} (total: {total_stored})"
-                )
-
-                # Update pagination cursor
-                if len(events) < 1000:
-                    # Last page
-                    break
-                else:
-                    # Move to next page (after last event timestamp)
-                    current_after = events[-1].timestamp
-
-            logger.info(
-                f"Backfill complete for {asset}: {total_stored} events stored"
-            )
-
-            return total_stored
+            return results
 
         except Exception as e:
-            logger.error(f"Error backfilling {asset} from {start_date} to {end_date}: {e}")
+            logger.error(f"Error fetching lending data from Dune: {e}")
             raise
+
+    async def fetch_for_asset(self, asset: str, max_age_hours: int = 24) -> int:
+        """
+        Fetch lending data for a specific asset from Dune.
+
+        Note: Dune query returns data for ALL assets, so this fetches all data
+        but only stores/counts the specified asset.
+
+        Args:
+            asset: Asset symbol (e.g., 'DAI', 'USDC', 'WETH')
+            max_age_hours: Maximum age of cached Dune results
+
+        Returns:
+            Number of data points stored for the asset
+        """
+        results = await self.fetch_dune_lending(max_age_hours=max_age_hours)
+        return results.get(asset.upper(), 0)
+
+    async def fetch_all_assets(self, max_age_hours: int = 24) -> dict[str, int]:
+        """
+        Fetch lending data for all tracked assets.
+
+        Args:
+            max_age_hours: Maximum age of cached Dune results
+
+        Returns:
+            Dict mapping asset to number of data points stored
+        """
+        # For Dune, we fetch all assets in one query
+        # This is more efficient than fetching per asset
+        return await self.fetch_dune_lending(max_age_hours=max_age_hours)
 
 
 async def create_lending_fetcher() -> LendingFetcher:
@@ -233,9 +176,7 @@ async def create_lending_fetcher() -> LendingFetcher:
     Factory function to create LendingFetcher with initialized client.
 
     Returns:
-        Configured LendingFetcher instance
+        Configured LendingFetcher instance with Dune client
     """
-    from src.fetch.aave_client import create_aave_client
-
-    aave_client = await create_aave_client()
-    return LendingFetcher(aave_client)
+    dune_client = DuneClient()  # Loads API key from environment
+    return LendingFetcher(dune_client)

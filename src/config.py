@@ -88,24 +88,69 @@ class Settings(BaseSettings):
         description="Period for open interest data (5m, 15m, 30m, 1h, 2h, 4h, 6h, 12h, 1d)",
     )
 
-    # Lending (Aave) specific settings
+    # Lending (Dune Analytics) specific settings
     tracked_lending_assets: str = Field(
         default="WETH,WBTC,USDC,USDT,DAI",
-        description="Comma-separated list of Aave assets to track (use Aave native symbols)",
+        description="Comma-separated list of lending assets to track",
     )
     lending_fetch_interval_hours: int = Field(
-        default=8,
-        description="Interval between lending data fetches in hours (check for new events)",
+        default=24,
+        description="Interval between lending data fetches in hours (Dune query provides daily snapshots)",
     )
     initial_lending_backfill_days: int = Field(
         default=730,
-        description="Days to backfill for lending data (limited by Aave V3 launch: Mar 2022)",
+        description="Days to backfill for lending data on initial setup",
     )
-    aave_v3_graphql_url: str = Field(
-        default="https://api.thegraph.com/subgraphs/name/aave/protocol-v3",
-        description="Aave V3 GraphQL API endpoint. NOTE: The Graph hosted service "
-        "was deprecated March 2024. New official API available at "
-        "https://api.v3.aave.com/graphql (requires schema validation before migration)",
+    dune_api_key: SecretStr = Field(
+        description="Dune Analytics API key for data fetching",
+    )
+    dune_lending_query_id: int = Field(
+        default=3328916,
+        description="Dune Analytics query ID for lending market data",
+    )
+
+    # Risk Analysis settings
+    RISK_ANALYSIS_DEFAULT_LOOKBACK_DAYS: int = Field(
+        default=30,
+        description="Default historical data lookback period for risk analysis (days)",
+    )
+    RISK_ANALYSIS_MAX_LOOKBACK_DAYS: int = Field(
+        default=180,
+        description="Maximum allowed lookback period for risk analysis (days)",
+    )
+    FUNDING_RATE_LOOKBACK_DAYS: int = Field(
+        default=30,
+        description="Funding rate data availability limit (hard constraint)",
+    )
+
+    # Position limits
+    MAX_PORTFOLIO_POSITIONS: int = Field(
+        default=20,
+        description="Maximum number of positions allowed in a portfolio",
+    )
+    MAX_LEVERAGE_LIMIT: float = Field(
+        default=125.0,
+        description="Maximum leverage allowed for futures positions",
+    )
+
+    # Risk calculation parameters
+    SENSITIVITY_RANGE: list[int] = Field(
+        default=[-30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30],
+        description="Price shock range for sensitivity analysis (percentages)",
+    )
+    VAR_CONFIDENCE_LEVELS: list[float] = Field(
+        default=[0.95, 0.99],
+        description="Confidence levels for VaR calculations",
+    )
+    RISK_FREE_RATE: float = Field(
+        default=0.0,
+        description="Annual risk-free rate for Sharpe ratio (0.0 = 0%)",
+    )
+
+    # Query optimization
+    QUERY_TIMEOUT_SECONDS: int = Field(
+        default=30,
+        description="Maximum time allowed for database queries in risk analysis",
     )
 
     @property

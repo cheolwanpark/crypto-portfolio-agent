@@ -362,61 +362,63 @@ class FuturesAssetCoverageResponse(BaseModel):
     assets: list[FuturesAssetCoverage] = Field(description="Coverage info for all tracked futures assets")
 
 
-# ==================== Lending (Aave) Models ====================
+# ==================== Lending (Dune Analytics) Models ====================
 
 
-class AaveReserveData(BaseModel):
+def decimal_to_ray(value: Decimal) -> str:
     """
-    Aave reserve data from GraphQL API.
+    Convert decimal rate to RAY format (10^27 precision).
 
-    Models the event-based data from Aave Subgraph reserveParamsHistoryItems.
+    Dune returns rates as decimals (e.g., 0.052 = 5.2%).
+    We store them in RAY format for precision.
+
+    Args:
+        value: Decimal rate (e.g., 0.052 for 5.2% APY)
+
+    Returns:
+        String representation of RAY value (e.g., "52000000000000000000000000")
+    """
+    ray_value = value * Decimal(10**27)
+    return str(int(ray_value))
+
+
+class DuneLendingData(BaseModel):
+    """
+    Raw lending data from Dune Analytics query.
+
+    Query ID: 3328916
+    Returns aggregated lending market data with rates and indices.
     """
 
     model_config = {"populate_by_name": True}
 
-    timestamp: int = Field(description="Event timestamp (Unix seconds)")
-    liquidity_rate: str = Field(alias="liquidityRate", description="Supply APR in RAY units (10^27)")
-    variable_borrow_rate: str = Field(
-        alias="variableBorrowRate", description="Variable borrow APR in RAY units (10^27)"
-    )
-    stable_borrow_rate: str = Field(alias="stableBorrowRate", description="Stable borrow APR in RAY units (10^27)")
-    total_liquidity: str = Field(alias="totalLiquidity", description="Total supplied liquidity")
-    available_liquidity: str = Field(alias="availableLiquidity", description="Available liquidity to borrow")
-    total_variable_debt: str = Field(alias="totalCurrentVariableDebt", description="Total variable rate debt")
-    total_stable_debt: str = Field(alias="totalPrincipalStableDebt", description="Total stable rate debt")
-    utilization_rate: str = Field(alias="utilizationRate", description="Utilization rate (decimal)")
-    price_in_eth: str | None = Field(default=None, alias="priceInEth", description="Asset price in ETH")
+    dt: datetime = Field(description="Date/time of the data point")
+    symbol: str = Field(description="Asset symbol (e.g., DAI, USDC)")
+    reserve: str = Field(description="Reserve contract address (Ethereum address)")
+    avg_stableBorrowRate: Decimal = Field(description="Average stable borrow rate (decimal, e.g., 0.052 = 5.2%)")
+    avg_variableBorrowRate: Decimal = Field(description="Average variable borrow rate (decimal)")
+    avg_supplyRate: Decimal = Field(description="Average supply rate (decimal)")
+    avg_liquidityIndex: Decimal = Field(description="Average liquidity index")
+    avg_variableBorrowIndex: Decimal = Field(description="Average variable borrow index")
 
-    def to_dict(self, eth_usd_price: Decimal | None = None) -> dict:
+    def to_dict(self) -> dict:
         """
         Convert to dictionary for database insertion.
 
-        Args:
-            eth_usd_price: Current ETH/USD price for computing price_usd
+        Transforms Dune decimal rates to RAY format (10^27 precision).
 
         Returns:
-            Dict with all lending data fields
+            Dict with all lending data fields ready for database
         """
-        # Calculate price_usd if we have both price_eth and eth_usd_price
-        price_eth_decimal = Decimal(self.price_in_eth) if self.price_in_eth else None
-        price_usd = None
-        if price_eth_decimal and eth_usd_price:
-            price_usd = price_eth_decimal * eth_usd_price
-
-        # Calculate total_borrowed = variable debt + stable debt
-        total_borrowed = Decimal(self.total_variable_debt) + Decimal(self.total_stable_debt)
-
         return {
-            "timestamp": datetime.fromtimestamp(self.timestamp, tz=timezone.utc),
-            "supply_rate_ray": self.liquidity_rate,  # Keep as string for NUMERIC(78,27)
-            "variable_borrow_rate_ray": self.variable_borrow_rate,
-            "stable_borrow_rate_ray": self.stable_borrow_rate,
-            "total_supplied": Decimal(self.total_liquidity),
-            "available_liquidity": Decimal(self.available_liquidity),
-            "total_borrowed": total_borrowed,
-            "utilization_rate": Decimal(self.utilization_rate),
-            "price_eth": price_eth_decimal,
-            "price_usd": price_usd,
+            "timestamp": self.dt,
+            "asset": self.symbol,
+            "reserve_address": self.reserve,
+            "supply_rate_ray": decimal_to_ray(self.avg_supplyRate),
+            "variable_borrow_rate_ray": decimal_to_ray(self.avg_variableBorrowRate),
+            "stable_borrow_rate_ray": decimal_to_ray(self.avg_stableBorrowRate),
+            "liquidity_index": decimal_to_ray(self.avg_liquidityIndex),
+            "variable_borrow_index": decimal_to_ray(self.avg_variableBorrowIndex),
         }
 
 
@@ -457,19 +459,16 @@ def convert_ray_to_apy(ray_rate: str | Decimal) -> float:
 class LendingDataPoint(BaseModel):
     """Lending data point for API responses."""
 
-    timestamp: datetime = Field(description="Event timestamp (UTC)")
+    timestamp: datetime = Field(description="Data point timestamp (UTC)")
+    reserve_address: str = Field(description="Reserve contract address")
     supply_rate_ray: str = Field(description="Supply APR in RAY units (10^27 precision)")
     supply_apy_percent: float = Field(description="Supply APY as percentage (e.g., 5.23 = 5.23%)")
     variable_borrow_rate_ray: str = Field(description="Variable borrow APR in RAY units")
     variable_borrow_apy_percent: float = Field(description="Variable borrow APY as percentage")
     stable_borrow_rate_ray: str = Field(description="Stable borrow APR in RAY units")
     stable_borrow_apy_percent: float = Field(description="Stable borrow APY as percentage")
-    total_supplied: Decimal = Field(description="Total supplied liquidity")
-    available_liquidity: Decimal = Field(description="Available liquidity to borrow")
-    total_borrowed: Decimal = Field(description="Total borrowed amount")
-    utilization_rate: Decimal = Field(description="Utilization rate (0.0 to 1.0)")
-    price_eth: Decimal | None = Field(default=None, description="Asset price in ETH")
-    price_usd: Decimal | None = Field(default=None, description="Asset price in USD")
+    liquidity_index: str = Field(description="Liquidity index in RAY units")
+    variable_borrow_index: str = Field(description="Variable borrow index in RAY units")
 
 
 class LendingResponse(BaseModel):
@@ -494,3 +493,95 @@ class LendingAssetCoverageResponse(BaseModel):
     """Response for lending asset coverage query."""
 
     assets: list[LendingAssetCoverage] = Field(description="Coverage info for all tracked lending assets")
+
+
+# ==================== Risk Profile Analysis Models ====================
+
+
+class PositionInput(BaseModel):
+    """Portfolio position input for risk analysis."""
+
+    asset: str = Field(description="Asset symbol (e.g., BTC, ETH)")
+    quantity: float = Field(gt=0, description="Position size (must be positive)")
+    position_type: str = Field(description="Position type: spot, futures_long, futures_short")
+    entry_price: float = Field(gt=0, description="Entry price in USD")
+    leverage: float = Field(default=1.0, gt=0, le=125, description="Leverage (1-125x, default: 1)")
+
+    @field_validator("asset")
+    @classmethod
+    def normalize_asset(cls, v: str) -> str:
+        """Normalize asset symbol to uppercase."""
+        return v.strip().upper()
+
+    @field_validator("position_type")
+    @classmethod
+    def validate_position_type(cls, v: str) -> str:
+        """Validate position type."""
+        valid_types = ["spot", "futures_long", "futures_short"]
+        if v not in valid_types:
+            raise ValueError(f"position_type must be one of {valid_types}")
+        return v
+
+
+class RiskProfileRequest(BaseModel):
+    """Request for portfolio risk profile calculation."""
+
+    positions: list[PositionInput] = Field(
+        min_length=1, max_length=20, description="Portfolio positions (1-20 positions)"
+    )
+    lookback_days: int = Field(
+        default=30, ge=7, le=180, description="Historical data lookback period (7-180 days)"
+    )
+
+
+class SensitivityRow(BaseModel):
+    """Portfolio sensitivity to price changes."""
+
+    price_change_pct: float = Field(description="Price change percentage (e.g., -30, -25, ..., 30)")
+    portfolio_value: float = Field(description="Portfolio value at this price level")
+    pnl: float = Field(description="Profit/Loss relative to current value")
+    return_pct: float = Field(description="Return percentage")
+
+
+class RiskMetrics(BaseModel):
+    """Comprehensive risk metrics for the portfolio."""
+
+    lookback_days_used: int = Field(description="Actual days of data used for calculations")
+    portfolio_variance: float = Field(description="Portfolio variance (daily)")
+    portfolio_volatility_annual: float = Field(description="Annualized portfolio volatility")
+    var_95_1day: float = Field(description="1-day Value at Risk at 95% confidence (negative = loss)")
+    var_99_1day: float = Field(description="1-day Value at Risk at 99% confidence (negative = loss)")
+    cvar_95: float = Field(description="Conditional VaR (Expected Shortfall) at 95%")
+    sharpe_ratio: float = Field(description="Sharpe ratio (annualized)")
+    max_drawdown: float = Field(description="Maximum drawdown (negative decimal, e.g., -0.25 = 25%)")
+    delta_exposure: float = Field(description="Total delta exposure (market directional risk)")
+    correlation_matrix: dict[str, dict[str, float]] = Field(
+        description="Asset correlation matrix"
+    )
+
+
+class ScenarioResult(BaseModel):
+    """Scenario analysis result."""
+
+    name: str = Field(description="Scenario name")
+    description: str = Field(description="Scenario description")
+    portfolio_value: float = Field(description="Portfolio value under this scenario")
+    pnl: float = Field(description="Profit/Loss relative to current value")
+    return_pct: float = Field(description="Return percentage")
+
+
+class RiskProfileResponse(BaseModel):
+    """Response for portfolio risk profile calculation."""
+
+    current_portfolio_value: float = Field(description="Current total portfolio value in USD")
+    data_availability_warning: str | None = Field(
+        default=None,
+        description="Warning message if data availability is limited or has gaps",
+    )
+    sensitivity_analysis: list[SensitivityRow] = Field(
+        description="Portfolio value sensitivity to price changes (-30% to +30%)"
+    )
+    risk_metrics: RiskMetrics = Field(description="Comprehensive risk metrics")
+    scenarios: list[ScenarioResult] = Field(
+        description="Predefined scenario analysis results (bull/bear markets, etc.)"
+    )

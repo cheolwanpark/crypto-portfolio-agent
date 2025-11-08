@@ -56,6 +56,9 @@ from src.models import (
     LendingAssetCoverage,
     LendingAssetCoverageResponse,
     convert_ray_to_apy,
+    # Risk analysis models
+    RiskProfileRequest,
+    RiskProfileResponse,
 )
 
 router = APIRouter()
@@ -752,4 +755,102 @@ async def get_lending(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to query lending data: {str(e)}",
+        )
+
+
+# ==================== Risk Analysis Endpoints ====================
+
+
+@router.post("/analysis/risk-profile", response_model=RiskProfileResponse)
+async def calculate_portfolio_risk_profile(
+    request: RiskProfileRequest,
+) -> RiskProfileResponse:
+    """
+    Calculate comprehensive risk profile for a portfolio of spot & futures positions.
+
+    This endpoint performs:
+    - Portfolio valuation across different price scenarios (-30% to +30%)
+    - Risk metrics calculation (VaR, CVaR, Sharpe ratio, volatility, max drawdown)
+    - Delta exposure calculation (market directional risk)
+    - Scenario analysis (bull market, bear market, crypto winter, etc.)
+    - Asset correlation analysis
+
+    **Methodology:**
+    - VaR/CVaR: Historical Simulation method (non-parametric)
+    - Time Horizon: 1-day VaR at 95% and 99% confidence levels
+    - Data Lookback: Configurable (default 30 days, max 180 days)
+    - Time Series: Daily intervals (12h spot OHLCV and 8h futures data resampled to 24h)
+    - Risk-Free Rate: 0% (configurable in settings)
+
+    **Limitations:**
+    - Funding rate data only available for past 30 days (vs desired 180 days for spot)
+    - Assumes basis (futures-spot spread) remains constant during price shocks
+    - Forward-fills missing data points (gaps ≤2 days)
+    - Portfolio resampled to daily intervals for consistency
+
+    **Example Request:**
+    ```json
+    {
+      "positions": [
+        {
+          "asset": "BTC",
+          "quantity": 1.5,
+          "position_type": "spot",
+          "entry_price": 45000.0,
+          "leverage": 1.0
+        },
+        {
+          "asset": "ETH",
+          "quantity": 10.0,
+          "position_type": "futures_long",
+          "entry_price": 2500.0,
+          "leverage": 3.0
+        }
+      ],
+      "lookback_days": 30
+    }
+    ```
+
+    **Response includes:**
+    - Current portfolio value
+    - Sensitivity analysis table (price changes from -30% to +30%)
+    - Risk metrics (VaR, CVaR, Sharpe, volatility, correlation matrix, delta exposure)
+    - Scenario results (8 predefined market scenarios)
+    - Data availability warnings (if any)
+    """
+    from src.analysis.riskprofile import calculate_risk_profile
+
+    try:
+        logger.info(
+            f"Risk profile calculation requested for {len(request.positions)} positions, "
+            f"lookback={request.lookback_days} days"
+        )
+
+        # Convert Pydantic model to dict for processing
+        request_data = {
+            "positions": [pos.model_dump() for pos in request.positions],
+            "lookback_days": request.lookback_days,
+        }
+
+        # Calculate risk profile
+        result = await calculate_risk_profile(request_data)
+
+        logger.info(
+            f"Risk profile calculated: portfolio_value=${result['current_portfolio_value']:,.2f}, "
+            f"VaR_95=${result['risk_metrics']['var_95_1day']:,.2f}"
+        )
+
+        return RiskProfileResponse(**result)
+
+    except ValueError as e:
+        logger.warning(f"Invalid risk profile request: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Risk profile calculation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Risk calculation failed: {str(e)}",
         )
