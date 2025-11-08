@@ -1,13 +1,10 @@
-⸻
-
-🛡️ Crypto Risk Advisor
+#🛡️ Crypto Risk Advisor
 
 AI-powered risk management for smarter, safer crypto investing.
 No price predictions — just knowledge, risk control, and confidence.
 
-⸻
 
-🚨 Problem
+#🚨 Problem
 
 1. Low Understanding of Crypto Finance
 
@@ -23,9 +20,7 @@ In high-volatility environments, this leads to forced liquidations, emotional de
 Insufficient knowledge leads to losses → losses create misinformation and negative sentiment → that drives people away from learning or re-entering the market.
 This cycle keeps individual investors stuck in a loop of losses, misinformation, and fear — pushing them out of the market before they ever learn how to manage risk properly.
 
-⸻
-
-💊 Solution — The Painkiller
+#💊 Solution — The Painkiller
 
 “Invest with knowledge. Manage risk. Reflect your preferences.”
 
@@ -37,18 +32,18 @@ This cycle keeps individual investors stuck in a loop of losses, misinformation,
 
 “Max drawdown 15%, only major assets, hedge with stables.”
 
-⸻
 
-🧠 Core Technology
+
+#🧠 Core Technology
 	•	AI Agent that interprets user goals, risk tolerance, and investment intentions
 	•	Risk Engine powered by Hierarchical Risk Parity (HRP), CVaR, and EWMA covariance models
 	•	AI ↔ Risk Engine feedback loop for personalized and validated portfolio construction
 	•	Uses real on-chain, derivatives, and historical market data to quantify risk exposure
 	•	Explainable output — not a black box
 
-⸻
 
-👤 Target Users
+
+#👤 Target Users
 
 | User Type                  | Core Needs                                         |
 |----------------------------|----------------------------------------------------|
@@ -58,9 +53,9 @@ This cycle keeps individual investors stuck in a loop of losses, misinformation,
 | Advisors / wealth managers | Client-ready, explainable crypto allocation tools  |
 
 
-⸻
 
-📊 Market Opportunity
+
+#📊 Market Opportunity
 
 | Scope                         | Size                      | Growth       |
 |-------------------------------|---------------------------|--------------|
@@ -70,9 +65,9 @@ This cycle keeps individual investors stuck in a loop of losses, misinformation,
 
 Sources: Mordor Intelligence, BCG, a16zcrypto, EY Parthenon
 
-⸻
 
-🆚 Competitive Positioning
+
+#🆚 Competitive Positioning
 
 | Feature                        | **Our Product** | Wealthfront | Shrimpy | Good Crypto |
 |--------------------------------|-----------------|-------------|---------|-------------|
@@ -83,40 +78,37 @@ Sources: Mordor Intelligence, BCG, a16zcrypto, EY Parthenon
 | Allocation Explainability      | ✅ ★            | ❌          | ❌      | ❌          |
 
 
-⸻
 
-🔑 Why We Win
+
+#🔑 Why We Win
 	•	Risk-first, not alpha-first — no prediction, no hype
 	•	Covers full crypto stack (spot, futures, lending, staking)
 	•	Converts risk metrics into plain-language guidance
 	•	Makes users stay in the game with discipline — not gamble into losses
 
-⸻
 
-💰 Business Model
+
+#💰 Business Model
 	•	AI usage credits (core revenue)
 	•	Optional affiliate fees from CEX/DeFi integrations
 	•	Premium subscription for alerts, automated hedging, and backtesting features
 
-⸻
 
-🚀 Go-to-Market Strategy
+
+#🚀 Go-to-Market Strategy
 	1.	Working professionals — LinkedIn, Blind performance ads
 	2.	Young crypto newcomers — YouTube Shorts, Instagram Reels
 	3.	Credibility building — interviews, case studies, fund manager insights
 	4.	Free-to-Paid flow — Risk Dashboard (free) → Hedging and scenarios (paid)
 
-⸻
 
-📎 Links
+
+#📎 Links
 	•	Pitch Deck → ...
 	•	Product Demo → ...
 	•	Risk Model Docs → ...
 
-⸻
 
-🔒 Disclaimer: This tool is for educational and simulation purposes only. Not financial advice.
+#🔒 Disclaimer: This tool is for educational and simulation purposes only. Not financial advice.
 
-⸻
 
-필요하면 이 README를 PDF로 변환, 핵심만 담은 1페이지 버전, 또는 로드맵 포함 버전으로 만들어줄 수 있어!
