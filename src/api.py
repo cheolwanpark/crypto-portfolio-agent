@@ -643,9 +643,9 @@ async def get_lending_assets() -> LendingAssetCoverageResponse:
 @router.get("/lending/{asset}", response_model=LendingResponse)
 async def get_lending(
     asset: str,
-    start: datetime | None = Query(None, description="Start timestamp (UTC)"),
-    end: datetime | None = Query(None, description="End timestamp (UTC)"),
-    limit: int | None = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
+    start: Annotated[datetime | None, Query(description="Start timestamp (UTC)")] = None,
+    end: Annotated[datetime | None, Query(description="End timestamp (UTC)")] = None,
+    limit: Annotated[int | None, Query(description="Maximum number of records to return", ge=1, le=1000)] = 100,
 ) -> LendingResponse:
     """
     Get lending data for an asset.
