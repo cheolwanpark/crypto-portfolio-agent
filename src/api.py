@@ -665,19 +665,21 @@ async def get_lending(
     """
     # Map user input to Aave symbol (e.g., BTC → WBTC)
     asset_upper = asset.upper()
-    symbol_map = settings.lending_asset_symbol_map
 
-    if asset_upper in symbol_map:
-        aave_asset = symbol_map[asset_upper]
+    # First check if it's already a native Aave symbol (more efficient)
+    if asset_upper in settings.lending_assets_list:
+        aave_asset = asset_upper
+    # Then try symbol mapping (e.g., BTC → WBTC)
+    elif asset_upper in settings.lending_asset_symbol_map:
+        aave_asset = settings.lending_asset_symbol_map[asset_upper]
     else:
-        # Check if it's already an Aave symbol
-        if asset_upper in settings.lending_assets_list:
-            aave_asset = asset_upper
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Asset '{asset}' not found. Available assets: {', '.join(settings.lending_assets_list)}",
-            )
+        # Build user-friendly error message showing both mapped and native symbols
+        mapped_symbols = [f"{k}→{v}" for k, v in settings.lending_asset_symbol_map.items() if k != v]
+        available_symbols = ", ".join(mapped_symbols + list(settings.lending_assets_list))
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Asset '{asset}' not found. Available: {available_symbols}",
+        )
 
     try:
         # Query lending data from database
