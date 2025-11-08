@@ -424,8 +424,8 @@ def convert_ray_to_apy(ray_rate: str | Decimal) -> float:
     """
     Convert Aave RAY rate to APY percentage.
 
-    Aave rates are expressed in RAY units (10^27) as APR with continuous compounding.
-    Formula: APY = e^APR - 1
+    Aave rates are expressed in RAY units (10^27) as APR with per-second compounding.
+    Formula: APY = (1 + APR/secondsPerYear)^secondsPerYear - 1
 
     Args:
         ray_rate: Rate in RAY units (string or Decimal)
@@ -433,23 +433,25 @@ def convert_ray_to_apy(ray_rate: str | Decimal) -> float:
     Returns:
         APY as percentage (e.g., 5.23 for 5.23%)
     """
-    import math
+    SECONDS_PER_YEAR = 31536000  # 365.25 days * 24 * 60 * 60
 
     # Convert RAY to APR decimal
     ray = Decimal(ray_rate)
     apr_decimal = ray / Decimal(10**27)
 
-    # Convert APR to APY with continuous compounding
-    # APY = e^APR - 1
+    # Convert APR to APY with per-second compounding
+    # APY = (1 + APR/secondsPerYear)^secondsPerYear - 1
     try:
-        apy_decimal = Decimal(math.exp(float(apr_decimal))) - Decimal(1)
+        # Use float for the power operation (Decimal doesn't support ** with large exponents)
+        apr_float = float(apr_decimal)
+        apy_decimal = (1 + apr_float / SECONDS_PER_YEAR) ** SECONDS_PER_YEAR - 1
     except OverflowError:
         # For extremely high rates, cap at 1000000% APY
         logger.warning(f"APR rate overflow: {apr_decimal}, capping at 1000000% APY")
         return 1000000.0
 
     # Convert to percentage
-    return float(apy_decimal * 100)
+    return apy_decimal * 100
 
 
 class LendingDataPoint(BaseModel):
