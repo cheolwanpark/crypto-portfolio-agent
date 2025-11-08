@@ -1,13 +1,12 @@
 "use client"
 
 import { useState, useEffect, useRef, useMemo } from "react"
-import { Send, Loader2, MessageSquare } from "lucide-react"
+import { Send, Loader2, MessageSquare, ArrowDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ChatBubble } from "@/components/chat-bubble"
-import { ChatStatusBanner } from "@/components/chat-status-banner"
 import { useChatDetail } from "@/hooks/use-chat-detail"
 import { sendMessage } from "@/lib/api-client"
 import { useToast } from "@/hooks/use-toast"
@@ -22,8 +21,34 @@ export function Chat({ chatId, onChatUpdate }: ChatProps) {
   const { chat, isLoading, error } = useChatDetail(chatId)
   const [input, setInput] = useState("")
   const [isSending, setIsSending] = useState(false)
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const [showScrollButton, setShowScrollButton] = useState(false)
+  const scrollAreaRef = useRef<HTMLDivElement>(null)
   const { toast } = useToast()
+
+  // Create display messages with empty placeholder when processing
+  // Must be before any conditional returns to maintain hook order
+  const displayMessages = useMemo(() => {
+    if (!chat) return []
+
+    const messages = [...chat.messages]
+
+    // If chat is processing and last message is from user (or no messages), add empty agent message
+    if (chat.status === "processing") {
+      const lastMessage = messages[messages.length - 1]
+      if (!lastMessage || lastMessage.type === "user") {
+        const emptyAgentMessage: BaseMessage = {
+          type: "agent",
+          message: "",
+          timestamp: new Date().toISOString(),
+          reasonings: [],
+          toolcalls: [],
+        }
+        messages.push(emptyAgentMessage)
+      }
+    }
+
+    return messages
+  }, [chat])
 
   // Update chat list when chat details change
   useEffect(() => {
@@ -37,12 +62,45 @@ export function Chat({ chatId, onChatUpdate }: ChatProps) {
     }
   }, [chat?.status, chat?.messages.length, chat?.portfolio, chat?.id, onChatUpdate])
 
-  // Auto-scroll to bottom when new messages arrive
+  // Check if user is near bottom of scroll area
+  const isNearBottom = () => {
+    if (!scrollAreaRef.current) return true
+    const { scrollTop, scrollHeight, clientHeight } = scrollAreaRef.current
+    const threshold = 100 // pixels from bottom
+    return scrollHeight - scrollTop - clientHeight < threshold
+  }
+
+  // Handle scroll to update scroll button visibility
+  const handleScroll = () => {
+    const nearBottom = isNearBottom()
+    setShowScrollButton(!nearBottom)
+  }
+
+  // Auto-scroll to bottom when new messages arrive (only if already at bottom)
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollIntoView({ behavior: "smooth" })
+    if (!scrollAreaRef.current) return
+
+    if (isNearBottom()) {
+      // Use setTimeout to ensure DOM has updated
+      const scrollTimer = setTimeout(() => {
+        if (scrollAreaRef.current) {
+          scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight
+        }
+      }, 0)
+
+      return () => clearTimeout(scrollTimer)
     }
-  }, [chat?.messages.length])
+  }, [displayMessages.length])
+
+  // Scroll to bottom function
+  const scrollToBottom = () => {
+    if (scrollAreaRef.current) {
+      scrollAreaRef.current.scrollTo({
+        top: scrollAreaRef.current.scrollHeight,
+        behavior: "smooth",
+      })
+    }
+  }
 
   const handleSend = async () => {
     if (!input.trim() || !chatId || isSending) return
@@ -115,72 +173,57 @@ export function Chat({ chatId, onChatUpdate }: ChatProps) {
 
   const canSendMessages = chat.status !== "completed" && chat.status !== "failed"
 
-  // Create display messages with empty placeholder when processing
-  const displayMessages = useMemo(() => {
-    const messages = [...chat.messages]
-
-    // If chat is processing and last message is from user (or no messages), add empty agent message
-    if (chat.status === "processing") {
-      const lastMessage = messages[messages.length - 1]
-      if (!lastMessage || lastMessage.type === "user") {
-        const emptyAgentMessage: BaseMessage = {
-          type: "agent",
-          message: "",
-          timestamp: new Date().toISOString(),
-          reasonings: [],
-          toolcalls: [],
-        }
-        messages.push(emptyAgentMessage)
-      }
-    }
-
-    return messages
-  }, [chat.messages, chat.status])
-
   return (
     <div className="relative flex h-full flex-col">
-      {/* Status Banner */}
-      <div className="border-b border-border p-4">
-        <div className="mx-auto max-w-3xl">
-          <ChatStatusBanner
-            status={chat.status}
-            errorMessage={chat.error_message}
-          />
-        </div>
-      </div>
-
       {/* Chat Messages */}
-      <ScrollArea className="flex-1 p-6">
-        <div className="mx-auto max-w-3xl space-y-6">
-          {displayMessages.length === 0 ? (
-            <div className="flex h-full items-center justify-center py-12 text-center">
-              <div>
-                <MessageSquare className="mx-auto mb-4 h-12 w-12 text-muted-foreground/50" />
-                <p className="text-sm text-muted-foreground">
-                  No messages yet. Start the conversation!
-                </p>
+      <div className="relative flex-1 overflow-hidden">
+        <ScrollArea ref={scrollAreaRef} className="h-full">
+          <div
+            className="mx-auto w-full space-y-6 px-6 py-6"
+            onScroll={handleScroll}
+            style={{ maxWidth: '70vw' }}
+          >
+            {displayMessages.length === 0 ? (
+              <div className="flex h-full items-center justify-center py-12 text-center">
+                <div>
+                  <MessageSquare className="mx-auto mb-4 h-12 w-12 text-muted-foreground/50" />
+                  <p className="text-sm text-muted-foreground">
+                    No messages yet. Start the conversation!
+                  </p>
+                </div>
               </div>
-            </div>
-          ) : (
-            <>
-              {displayMessages.map((message, index) => (
+            ) : (
+              displayMessages.map((message, index) => (
                 <ChatBubble
                   key={`${message.timestamp}-${index}`}
                   message={message}
                   chatStatus={chat.status}
                 />
-              ))}
-              {/* Scroll anchor */}
-              <div ref={scrollRef} />
-            </>
-          )}
-        </div>
-      </ScrollArea>
+              ))
+            )}
+          </div>
+        </ScrollArea>
+
+        {/* Scroll to bottom button */}
+        {showScrollButton && (
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
+            <Button
+              size="sm"
+              variant="secondary"
+              className="rounded-full shadow-lg"
+              onClick={scrollToBottom}
+            >
+              <ArrowDown className="mr-2 h-4 w-4" />
+              Scroll to bottom
+            </Button>
+          </div>
+        )}
+      </div>
 
       {/* Input Area */}
       {canSendMessages && (
         <div className="border-t border-border bg-card p-4">
-          <div className="mx-auto max-w-3xl">
+          <div className="mx-auto w-full px-6" style={{ maxWidth: '70vw' }}>
             <div className="flex gap-2">
               <Input
                 value={input}
@@ -215,7 +258,7 @@ export function Chat({ chatId, onChatUpdate }: ChatProps) {
       {/* Disabled input area for completed/failed chats */}
       {!canSendMessages && (
         <div className="border-t border-border bg-muted/50 p-4">
-          <div className="mx-auto max-w-3xl text-center text-sm text-muted-foreground">
+          <div className="mx-auto w-full px-6 text-center text-sm text-muted-foreground" style={{ maxWidth: '70vw' }}>
             This chat is {chat.status}. You cannot send more messages.
           </div>
         </div>

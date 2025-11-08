@@ -10,7 +10,7 @@ export function ThinkingIndicator({ className }: ThinkingIndicatorProps) {
   return (
     <div
       className={cn(
-        "flex items-center justify-center border-t border-border bg-muted/30 py-3",
+        "flex items-center justify-start border-t border-border bg-muted/30 px-4 py-3",
         className,
       )}
     >

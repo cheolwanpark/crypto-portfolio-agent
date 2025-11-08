@@ -47,9 +47,11 @@ export function useChatDetail(chatId: string | null): UseChatDetailReturn {
         }
       }
     } catch (err) {
+      // Set error but don't stop polling - continue trying
       setError(
         err instanceof Error ? err : new Error("Failed to fetch chat detail"),
       )
+      // Don't clear the interval on error - let polling continue
     } finally {
       setIsLoading(false)
     }
@@ -89,7 +91,8 @@ export function useChatDetail(chatId: string | null): UseChatDetailReturn {
         intervalRef.current = null
       }
     }
-  }, [chatId, chat?.status, fetchChat])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatId, chat?.status])
 
   return {
     chat,

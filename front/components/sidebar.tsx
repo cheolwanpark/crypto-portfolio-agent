@@ -64,7 +64,7 @@ export function Sidebar({
       <div className="border-b border-sidebar-border p-3">
         <Button
           variant="outline"
-          className="w-full justify-start rounded-xl bg-transparent"
+          className="w-full justify-start rounded-xl bg-transparent text-white hover:text-white/70"
           onClick={onNewChat}
         >
           <Plus className="mr-2 h-4 w-4" />
