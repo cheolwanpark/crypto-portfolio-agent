@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { fetchChats } from "@/lib/api-client"
+import { parseUTCDate } from "@/lib/date-utils"
 import type { ChatListItem } from "@/lib/types"
 
 export interface UseChatListReturn {
@@ -24,7 +25,13 @@ export function useChatList(): UseChatListReturn {
   const fetchChatList = useCallback(async () => {
     try {
       const data = await fetchChats()
-      setChats(data)
+      // Transform UTC timestamps to Date objects
+      const transformedChats = data.map((chat) => ({
+        ...chat,
+        created_at: parseUTCDate(chat.created_at) as any,
+        updated_at: parseUTCDate(chat.updated_at) as any,
+      }))
+      setChats(transformedChats)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err : new Error("Failed to fetch chats"))

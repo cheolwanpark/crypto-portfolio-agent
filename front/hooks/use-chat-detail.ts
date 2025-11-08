@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import { fetchChatDetail } from "@/lib/api-client"
+import { parseUTCDate } from "@/lib/date-utils"
 import type { ChatDetail } from "@/lib/types"
 
 const POLLING_INTERVAL = 3000 // 3 seconds
@@ -35,7 +36,27 @@ export function useChatDetail(chatId: string | null): UseChatDetailReturn {
 
     try {
       const data = await fetchChatDetail(chatId)
-      setChat(data)
+
+      // Transform UTC timestamps to Date objects
+      const transformedChat = {
+        ...data,
+        created_at: parseUTCDate(data.created_at) as any,
+        updated_at: parseUTCDate(data.updated_at) as any,
+        messages: data.messages.map((msg) => ({
+          ...msg,
+          timestamp: parseUTCDate(msg.timestamp) as any,
+          reasonings: msg.reasonings?.map((r) => ({
+            ...r,
+            timestamp: parseUTCDate(r.timestamp) as any,
+          })) || [],
+          toolcalls: msg.toolcalls?.map((t) => ({
+            ...t,
+            timestamp: parseUTCDate(t.timestamp) as any,
+          })) || [],
+        })),
+      }
+
+      setChat(transformedChat)
       setError(null)
 
       // Stop polling if chat is completed or failed

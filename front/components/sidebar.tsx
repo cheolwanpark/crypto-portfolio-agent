@@ -1,6 +1,6 @@
 "use client"
 
-import { Plus, Sparkles, Loader2, CheckCircle2, XCircle, MessageSquare } from "lucide-react"
+import { Plus, Sparkles, Loader2, CheckCircle2, XCircle, MessageSquare, ChevronLeft, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -13,6 +13,8 @@ interface SidebarProps {
   onSelectChat: (chatId: string) => void
   onNewChat: () => void
   isLoading?: boolean
+  isCollapsed?: boolean
+  onToggleCollapse?: () => void
 }
 
 function getStatusIcon(status: ChatListItem["status"]) {
@@ -43,6 +45,8 @@ export function Sidebar({
   onSelectChat,
   onNewChat,
   isLoading = false,
+  isCollapsed = false,
+  onToggleCollapse,
 }: SidebarProps) {
   // Sort chats by updated_at (most recent first)
   const sortedChats = [...chats].sort(
@@ -51,41 +55,85 @@ export function Sidebar({
   )
 
   return (
-    <div className="flex w-80 flex-col border-r border-border bg-sidebar">
+    <div className={cn(
+      "flex flex-col border-r border-border bg-sidebar transition-all duration-300 ease-in-out",
+      isCollapsed ? "w-16" : "w-80"
+    )}>
       {/* Header */}
-      <div className="flex items-center gap-2 border-b border-sidebar-border px-4 py-5">
-        <Sparkles className="h-6 w-6 text-sidebar-primary" />
-        <span className="text-lg font-semibold text-sidebar-foreground">
-          Crypto Agent
-        </span>
+      <div className={cn(
+        "flex items-center border-b border-sidebar-border px-4 py-5 transition-all",
+        isCollapsed ? "justify-center" : "justify-between"
+      )}>
+        {!isCollapsed && (
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-6 w-6 text-sidebar-primary" />
+            <span className="text-lg font-semibold text-sidebar-foreground whitespace-nowrap">
+              Crypto Agent
+            </span>
+          </div>
+        )}
+        {onToggleCollapse && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onToggleCollapse}
+            className="h-8 w-8 text-sidebar-foreground hover:bg-sidebar-accent transition-all"
+            title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {isCollapsed ? (
+              <ChevronRight className="h-5 w-5" />
+            ) : (
+              <ChevronLeft className="h-5 w-5" />
+            )}
+          </Button>
+        )}
       </div>
 
       {/* New Chat Button */}
-      <div className="border-b border-sidebar-border p-3">
-        <Button
-          variant="outline"
-          className="w-full justify-start rounded-xl bg-transparent text-white hover:text-white/70"
-          onClick={onNewChat}
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          New Chat
-        </Button>
-      </div>
+      {!isCollapsed && (
+        <div className="border-b border-sidebar-border p-3">
+          <Button
+            variant="outline"
+            className="w-full justify-start rounded-xl bg-transparent text-white hover:text-white/70"
+            onClick={onNewChat}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            New Chat
+          </Button>
+        </div>
+      )}
+      {isCollapsed && (
+        <div className="border-b border-sidebar-border p-3 flex justify-center">
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-10 w-10 rounded-xl bg-transparent text-white hover:text-white/70"
+            onClick={onNewChat}
+            title="New Chat"
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
 
       {/* Chat List */}
       <ScrollArea className="flex-1 px-3 py-4">
         {isLoading && chats.length === 0 ? (
           <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Loading chats...
+            <Loader2 className={cn("h-4 w-4 animate-spin", !isCollapsed && "mr-2")} />
+            {!isCollapsed && "Loading chats..."}
           </div>
         ) : sortedChats.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-8 text-center">
-            <MessageSquare className="mb-2 h-8 w-8 text-muted-foreground/50" />
-            <p className="text-sm text-muted-foreground">No chats yet</p>
-            <p className="mt-1 text-xs text-muted-foreground/70">
-              Click "New Chat" to get started
-            </p>
+            <MessageSquare className={cn("h-8 w-8 text-muted-foreground/50", !isCollapsed && "mb-2")} />
+            {!isCollapsed && (
+              <>
+                <p className="text-sm text-muted-foreground">No chats yet</p>
+                <p className="mt-1 text-xs text-muted-foreground/70">
+                  Click "New Chat" to get started
+                </p>
+              </>
+            )}
           </div>
         ) : (
           <div className="space-y-2">
@@ -102,6 +150,28 @@ export function Sidebar({
                     month: "short",
                     day: "numeric",
                   })
+
+              if (isCollapsed) {
+                // Collapsed view: Just show icon with status indicator
+                return (
+                  <button
+                    key={chat.id}
+                    onClick={() => onSelectChat(chat.id)}
+                    className={cn(
+                      "w-full rounded-xl p-2 transition-colors flex justify-center items-center relative",
+                      selectedChatId === chat.id
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                        : "text-sidebar-foreground hover:bg-sidebar-accent/50",
+                    )}
+                    title={chat.title || `Chat - ${chat.strategy}`}
+                  >
+                    <MessageSquare className="h-5 w-5" />
+                    <div className="absolute top-1 right-1">
+                      {getStatusIcon(chat.status)}
+                    </div>
+                  </button>
+                )
+              }
 
               return (
                 <button

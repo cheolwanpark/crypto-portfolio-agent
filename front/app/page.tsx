@@ -13,6 +13,7 @@ import type { CreateChatParams } from "@/lib/types"
 export default function Home() {
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null)
   const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
 
   const { chats, isLoading: isLoadingChats, updateChatInList, refetch } = useChatList()
   const { create, isCreating } = useCreateChat()
@@ -51,6 +52,8 @@ export default function Home() {
         onSelectChat={setSelectedChatId}
         onNewChat={() => setIsNewChatModalOpen(true)}
         isLoading={isLoadingChats}
+        isCollapsed={isSidebarCollapsed}
+        onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
       />
 
       {/* Main Content */}
