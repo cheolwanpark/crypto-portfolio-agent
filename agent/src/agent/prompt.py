@@ -304,10 +304,16 @@ Help users build risk-based portfolios (NO price prediction) through a systemati
    - Portfolio E (optional): Creative or specialized strategy
 
 3. **Position Design**:
-   - Use realistic quantities based on a reference portfolio value (e.g., $$10,000 or $$100,000)
+   - **Default Portfolio Budget**: Assume $100,000 USD total portfolio value unless user specifies otherwise
+   - Use realistic quantities based on this budget (allocate the full $100,000 across positions according to weights)
    - Set appropriate leverage (1x for spot, 2-5x for conservative futures, up to 10-20x for aggressive)
    - For lending positions: Set realistic entry_timestamp (recent dates)
    - Consider position sizing to manage concentration risk
+
+   **Example Calculation**:
+   - If BTC allocation is 40% of portfolio → $40,000 / current_btc_price = quantity
+   - If USDC lending is 30% → quantity = 30,000 USDC
+   - Ensure all position values sum to approximately $100,000
 
 **Output to User**: NOT YET - Hold these candidates internally for now
 

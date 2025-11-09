@@ -3,8 +3,18 @@
 import { useState } from "react"
 import { Sidebar } from "@/components/sidebar"
 import { Chat } from "@/components/chat"
+import { Board } from "@/components/board"
 import { NewChatModal } from "@/components/new-chat-modal"
+import { Button } from "@/components/ui/button"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { useChatList } from "@/hooks/use-chat-list"
+import { useChatDetail } from "@/hooks/use-chat-detail"
 import { useCreateChat } from "@/hooks/use-create-chat"
 import { useToast } from "@/hooks/use-toast"
 import { Toaster } from "@/components/ui/toaster"
@@ -14,8 +24,11 @@ export default function Home() {
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null)
   const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  const [viewMode, setViewMode] = useState<"chat" | "board">("chat")
+  const [selectedVersion, setSelectedVersion] = useState<string>("latest")
 
   const { chats, isLoading: isLoadingChats, updateChatInList, refetch } = useChatList()
+  const { chat } = useChatDetail(selectedChatId)
   const { create, isCreating } = useCreateChat()
   const { toast } = useToast()
 
@@ -57,11 +70,32 @@ export default function Home() {
       />
 
       {/* Main Content */}
-      <div className="flex flex-1 flex-col">
-        {/* Chat Area */}
-        <div className="flex-1 overflow-hidden">
-          <Chat chatId={selectedChatId} onChatUpdate={updateChatInList} />
-        </div>
+      <div className="flex flex-1 flex-col overflow-hidden">
+        {selectedChatId ? (
+          viewMode === "chat" ? (
+            <Chat
+              chatId={selectedChatId}
+              onChatUpdate={updateChatInList}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+            />
+          ) : (
+            <Board
+              chatId={selectedChatId}
+              version={
+                selectedVersion === "latest"
+                  ? undefined
+                  : Number(selectedVersion)
+              }
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+              selectedVersion={selectedVersion}
+              onVersionChange={setSelectedVersion}
+            />
+          )
+        ) : (
+          <Chat chatId={null} onChatUpdate={updateChatInList} />
+        )}
       </div>
 
       {/* New Chat Modal */}

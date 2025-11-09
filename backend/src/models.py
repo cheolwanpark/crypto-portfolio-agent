@@ -741,3 +741,210 @@ class MultiAssetAggregatedStatsResponse(BaseModel):
         default=None, description="Warnings about data availability or quality issues"
     )
     timestamp: datetime = Field(description="Response generation timestamp (UTC)")
+
+
+# ==================== Graph Visualization Models ====================
+
+
+class SensitivityDataPoint(BaseModel):
+    """Single data point in sensitivity analysis graph."""
+
+    x: float = Field(description="Price change percentage (e.g., -30.0 to 30.0)")
+    y: float = Field(description="Portfolio value at this price change")
+    return_pct: float = Field(description="Return percentage from current value")
+    pnl: float = Field(description="Profit/loss in absolute terms")
+
+
+class SensitivityGraphData(BaseModel):
+    """Portfolio value sensitivity heatmap data for line charts."""
+
+    data_points: list[SensitivityDataPoint] = Field(
+        description="Sensitivity curve data points"
+    )
+    current_position: int = Field(
+        description="Index of current position (0% price change)"
+    )
+    value_range: dict = Field(
+        description="Value range: {min, max, current}",
+        examples=[{"min": 95000, "max": 125000, "current": 110000}],
+    )
+
+
+class DeltaGaugeData(BaseModel):
+    """Delta gauge chart data for market neutrality visualization."""
+
+    delta_raw: float = Field(description="Raw delta exposure in USD")
+    delta_normalized: float = Field(
+        description="Normalized delta (-1.0 to +1.0 scale)",
+        ge=-1.0,
+        le=1.0,
+    )
+    status: str = Field(
+        description="Status: neutral | slight_long | slight_short | high_long | high_short"
+    )
+    portfolio_value: float = Field(description="Total portfolio value")
+    directional_exposure_pct: float = Field(
+        description="Directional exposure as percentage of portfolio"
+    )
+
+
+class RiskContribution(BaseModel):
+    """Risk contribution for a single asset."""
+
+    asset: str = Field(description="Asset symbol")
+    risk_pct: float = Field(description="Risk contribution percentage")
+    value_pct: float = Field(description="Value weight percentage")
+    risk_value: float = Field(description="Risk contribution value")
+    position_value: float = Field(description="Position value in USD")
+
+
+class RiskContributionData(BaseModel):
+    """Risk contribution breakdown for pie chart visualization."""
+
+    contributions: list[RiskContribution] = Field(
+        description="Risk contributions by asset, sorted by absolute risk"
+    )
+    total_risk: float = Field(description="Sum of absolute risk contributions")
+    diversification_benefit: float = Field(
+        description="Diversification benefit as percentage"
+    )
+
+
+class HealthComponent(BaseModel):
+    """Individual health score component."""
+
+    score: float = Field(description="Score for this component (0-25)")
+    status: str = Field(description="Status: excellent | good | fair | warning | poor")
+
+
+class LiquidationRisk(BaseModel):
+    """Liquidation risk for a single position."""
+
+    asset: str = Field(description="Asset symbol")
+    position_type: str = Field(description="Position type")
+    liquidation_price: float = Field(description="Estimated liquidation price")
+    current_price: float = Field(description="Current market price")
+    price_distance_pct: float = Field(
+        description="Price distance to liquidation as percentage"
+    )
+    risk_level: str = Field(description="Risk level: safe | moderate | high")
+
+
+class AlertDashboardData(BaseModel):
+    """Risk alert dashboard with real-time health indicators."""
+
+    health_score: float = Field(
+        description="Overall portfolio health score (0-100)",
+        ge=0,
+        le=100,
+    )
+    health_components: dict[str, HealthComponent] = Field(
+        description="Individual health components: delta_neutral, volatility, sharpe_ratio, leverage"
+    )
+    liquidation_risk: dict = Field(
+        description="Liquidation risk assessment",
+        examples=[{
+            "overall_risk": "low",
+            "positions": [
+                {
+                    "asset": "BTC",
+                    "position_type": "futures_long",
+                    "liquidation_price": 45000,
+                    "current_price": 95000,
+                    "price_distance_pct": 52.6,
+                    "risk_level": "safe"
+                }
+            ]
+        }],
+    )
+    rebalancing_signal: dict = Field(
+        description="Rebalancing recommendation",
+        examples=[{
+            "needed": False,
+            "urgency": "none",
+            "current_delta": 150.5,
+            "delta_normalized": 0.02
+        }],
+    )
+
+
+class GraphRequest(BaseModel):
+    """Request for graph-ready visualization data."""
+
+    positions: list[PositionInput] = Field(
+        description="List of portfolio positions (1-20)",
+        min_length=1,
+        max_length=20,
+    )
+    lookback_days: int = Field(
+        default=30,
+        description="Number of days to look back for historical data",
+        ge=7,
+        le=180,
+    )
+    graph_types: list[str] = Field(
+        description="Types of graphs to generate",
+        examples=[["sensitivity", "delta", "risk_contribution", "alerts"]],
+    )
+
+    @field_validator("graph_types")
+    @classmethod
+    def validate_graph_types(cls, v: list[str]) -> list[str]:
+        """Validate graph types."""
+        valid_types = {
+            "sensitivity",
+            "delta",
+            "risk_contribution",
+            "alerts",
+            "funding_waterfall",  # Phase 2
+            "rolling_metrics",    # Phase 2
+            "monte_carlo",        # Phase 2
+        }
+        for graph_type in v:
+            if graph_type not in valid_types:
+                raise ValueError(
+                    f"Invalid graph type: {graph_type}. "
+                    f"Valid types: {', '.join(sorted(valid_types))}"
+                )
+        return v
+
+
+class GraphResponse(BaseModel):
+    """Response containing graph-ready visualization data."""
+
+    sensitivity: SensitivityGraphData | None = Field(
+        default=None,
+        description="Portfolio value sensitivity graph data"
+    )
+    delta: DeltaGaugeData | None = Field(
+        default=None,
+        description="Delta gauge chart data"
+    )
+    risk_contribution: RiskContributionData | None = Field(
+        default=None,
+        description="Risk contribution breakdown data"
+    )
+    alerts: AlertDashboardData | None = Field(
+        default=None,
+        description="Risk alert dashboard data"
+    )
+    funding_waterfall: dict | None = Field(
+        default=None,
+        description="Funding P&L waterfall data (Phase 2)"
+    )
+    rolling_metrics: dict | None = Field(
+        default=None,
+        description="Rolling risk metrics time series data (Phase 2)"
+    )
+    monte_carlo: dict | None = Field(
+        default=None,
+        description="Monte Carlo fan chart data (Phase 2)"
+    )
+    metadata: dict = Field(
+        description="Metadata about the calculation",
+        examples=[{
+            "lookback_days_used": 30,
+            "graph_types_generated": ["sensitivity", "delta"],
+            "timestamp": "2025-01-15T10:30:00Z"
+        }],
+    )

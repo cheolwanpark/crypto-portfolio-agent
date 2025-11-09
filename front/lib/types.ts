@@ -148,3 +148,104 @@ export function clampAPY(value: number): number {
 export function clampDrawdown(value: number): number {
   return Math.max(0, Math.min(100, value))
 }
+
+// ============================================================================
+// Graph Visualization Types
+// ============================================================================
+
+export interface SensitivityDataPoint {
+  x: number
+  y: number
+  return_pct: number
+  pnl: number
+}
+
+export interface SensitivityGraphData {
+  data_points: SensitivityDataPoint[]
+  current_position: number
+  value_range: {
+    min: number
+    max: number
+    current: number
+  }
+}
+
+export interface DeltaGaugeData {
+  delta_raw: number
+  delta_normalized: number
+  status: "neutral" | "slight_long" | "slight_short" | "high_long" | "high_short"
+  portfolio_value: number
+  directional_exposure_pct: number
+}
+
+export interface RiskContribution {
+  asset: string
+  risk_pct: number
+  value_pct: number
+  risk_value: number
+  position_value: number
+}
+
+export interface RiskContributionData {
+  contributions: RiskContribution[]
+  total_risk: number
+  diversification_benefit: number
+}
+
+export interface HealthComponent {
+  score: number
+  status: "excellent" | "good" | "fair" | "warning" | "poor"
+}
+
+export interface LiquidationRisk {
+  asset: string
+  position_type: string
+  liquidation_price: number
+  current_price: number
+  price_distance_pct: number
+  risk_level: "safe" | "moderate" | "high"
+}
+
+export interface AlertDashboardData {
+  health_score: number
+  health_components: {
+    delta_neutral: HealthComponent
+    volatility: HealthComponent
+    sharpe_ratio: HealthComponent
+    leverage: HealthComponent
+  }
+  liquidation_risk: {
+    overall_risk: "low" | "moderate" | "high"
+    positions: LiquidationRisk[]
+  }
+  rebalancing_signal: {
+    needed: boolean
+    urgency: "none" | "medium" | "high"
+    current_delta: number
+    delta_normalized: number
+  }
+}
+
+export interface GraphResponse {
+  sensitivity: SensitivityGraphData | null
+  delta: DeltaGaugeData | null
+  risk_contribution: RiskContributionData | null
+  alerts: AlertDashboardData | null
+  funding_waterfall: Record<string, any> | null
+  rolling_metrics: Record<string, any> | null
+  monte_carlo: Record<string, any> | null
+  metadata: {
+    lookback_days_used: number
+    graph_types_generated: string[]
+    timestamp: string
+  }
+}
+
+export type GraphType =
+  | "sensitivity"
+  | "delta"
+  | "risk_contribution"
+  | "alerts"
+  | "funding_waterfall"
+  | "rolling_metrics"
+  | "monte_carlo"

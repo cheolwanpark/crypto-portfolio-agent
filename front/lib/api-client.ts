@@ -4,9 +4,12 @@ import type {
   ChatDetail,
   PortfolioResponse,
   CreateChatParams,
+  Position,
+  GraphType,
+  GraphResponse,
 } from "./types"
 
-// Get API URL from environment variable, default to localhost:8001
+// Get Agent API URL from environment variable, default to localhost:8001
 const getApiUrl = () => {
   if (typeof window === "undefined") {
     // Server-side: use environment variable or default
@@ -14,6 +17,16 @@ const getApiUrl = () => {
   }
   // Client-side: use environment variable or default
   return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001"
+}
+
+// Get Data API URL from environment variable, default to localhost:8000
+const getDataApiUrl = () => {
+  if (typeof window === "undefined") {
+    // Server-side: use environment variable or default
+    return process.env.NEXT_PUBLIC_DATA_API_URL || "http://localhost:8000"
+  }
+  // Client-side: use environment variable or default
+  return process.env.NEXT_PUBLIC_DATA_API_URL || "http://localhost:8000"
 }
 
 // ============================================================================
@@ -168,4 +181,46 @@ export async function sendMessage(
   message: string,
 ): Promise<ChatDetail> {
   return sendFollowup(chatId, message)
+}
+
+/**
+ * Fetch graph visualization data for a portfolio
+ * POST /api/v1/analysis/graph
+ *
+ * @param positions - Array of position objects from portfolio
+ * @param graphTypes - Types of graphs to generate (default: all Phase 1 graphs)
+ * @param lookbackDays - Number of days to look back for historical data (default: 30)
+ */
+export async function fetchGraph(
+  positions: Position[],
+  graphTypes: GraphType[] = ["sensitivity", "delta", "risk_contribution", "alerts"],
+  lookbackDays: number = 30,
+): Promise<GraphResponse> {
+  const apiUrl = getDataApiUrl() // Use data API (port 8000) for graph endpoint
+
+  // Convert Position objects to the format expected by backend
+  const backendPositions = positions.map((pos) => ({
+    asset: pos.asset,
+    quantity: pos.quantity,
+    position_type: pos.position_type,
+    entry_price: pos.entry_price,
+    leverage: pos.leverage,
+    ...(pos.entry_timestamp && { entry_timestamp: pos.entry_timestamp }),
+    ...(pos.entry_index && { entry_index: pos.entry_index }),
+    ...(pos.borrow_type && { borrow_type: pos.borrow_type }),
+  }))
+
+  const response = await fetch(`${apiUrl}/api/v1/analysis/graph`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      positions: backendPositions,
+      lookback_days: lookbackDays,
+      graph_types: graphTypes,
+    }),
+  })
+
+  return handleResponse<GraphResponse>(response)
 }

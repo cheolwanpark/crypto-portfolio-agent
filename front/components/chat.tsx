@@ -17,9 +17,11 @@ import type { BaseMessage, ChatListItem, InvestmentStrategy } from "@/lib/types"
 interface ChatProps {
   chatId: string | null
   onChatUpdate?: (chatId: string, updates: Partial<ChatListItem>) => void
+  viewMode?: "chat" | "board"
+  onViewModeChange?: (mode: "chat" | "board") => void
 }
 
-export function Chat({ chatId, onChatUpdate }: ChatProps) {
+export function Chat({ chatId, onChatUpdate, viewMode, onViewModeChange }: ChatProps) {
   const { chat, isLoading, error, refetch } = useChatDetail(chatId)
   const [input, setInput] = useState("")
   const [isSending, setIsSending] = useState(false)
@@ -199,6 +201,8 @@ export function Chat({ chatId, onChatUpdate }: ChatProps) {
         strategy={chat.strategy}
         targetApy={chat.target_apy}
         maxDrawdown={chat.max_drawdown}
+        viewMode={viewMode}
+        onViewModeChange={onViewModeChange}
       />
 
       {/* Chat Messages */}

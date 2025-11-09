@@ -59,6 +59,13 @@ from src.models import (
     # Risk analysis models
     RiskProfileRequest,
     RiskProfileResponse,
+    # Graph visualization models
+    GraphRequest,
+    GraphResponse,
+    SensitivityGraphData,
+    DeltaGaugeData,
+    RiskContributionData,
+    AlertDashboardData,
     # Aggregated statistics models
     AggregatedSpotStats,
     AggregatedFuturesStats,
@@ -1209,4 +1216,312 @@ async def calculate_portfolio_risk_profile(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Risk calculation failed: {str(e)}",
+        )
+
+
+@router.post("/analysis/graph", response_model=GraphResponse)
+async def calculate_graph_data(
+    request: GraphRequest,
+) -> GraphResponse:
+    """
+    Calculate graph-ready visualization data for portfolio risk dashboards.
+
+    This endpoint generates chart-ready data structures for various risk
+    visualization types based on the same underlying risk profile calculations.
+
+    **Available Graph Types:**
+
+    **Phase 1 (Implemented):**
+    - `sensitivity`: Portfolio value sensitivity heatmap (-30% to +30% price moves)
+    - `delta`: Delta gauge for market neutrality monitoring
+    - `risk_contribution`: Risk attribution breakdown by asset
+    - `alerts`: Real-time risk alert dashboard with health scores
+
+    **Phase 2 (Coming Soon):**
+    - `funding_waterfall`: P&L decomposition for perp/spot/lending strategies
+    - `rolling_metrics`: Time series of rolling risk metrics
+    - `monte_carlo`: Monte Carlo simulation fan chart
+
+    **Usage:**
+    Request only the graph types you need to optimize performance. For example,
+    if you only need the delta gauge, request `graph_types: ["delta"]`.
+
+    **Example Request:**
+    ```json
+    {
+      "positions": [
+        {
+          "asset": "BTC",
+          "quantity": 1.0,
+          "position_type": "spot",
+          "entry_price": 95000
+        },
+        {
+          "asset": "BTC",
+          "quantity": -1.0,
+          "position_type": "futures_short",
+          "entry_price": 95500,
+          "leverage": 3
+        }
+      ],
+      "lookback_days": 30,
+      "graph_types": ["sensitivity", "delta", "risk_contribution", "alerts"]
+    }
+    ```
+
+    **Performance Notes:**
+    - Phase 1 graphs use the same calculation as risk-profile endpoint
+    - Phase 2 graphs (rolling_metrics, monte_carlo) are computationally expensive
+    - Consider caching results for frequently-accessed portfolios
+    """
+    from src.analysis import graph, riskprofile
+
+    try:
+        logger.info(
+            f"Graph data request: {len(request.positions)} positions, "
+            f"{request.lookback_days} days lookback, "
+            f"types={request.graph_types}"
+        )
+
+        # Convert request to dict for processing
+        request_data = {
+            "positions": [pos.model_dump() for pos in request.positions],
+            "lookback_days": request.lookback_days,
+        }
+
+        # First, calculate the base risk profile (reuse existing calculations)
+        risk_profile = await riskprofile.calculate_risk_profile(request_data)
+
+        # Initialize response
+        response_data = {
+            "sensitivity": None,
+            "delta": None,
+            "risk_contribution": None,
+            "alerts": None,
+            "funding_waterfall": None,
+            "rolling_metrics": None,
+            "monte_carlo": None,
+            "metadata": {
+                "lookback_days_used": risk_profile["risk_metrics"]["lookback_days_used"],
+                "graph_types_generated": [],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        }
+
+        # Generate requested graphs
+        for graph_type in request.graph_types:
+            if graph_type == "sensitivity":
+                sensitivity_data = graph.calculate_sensitivity_graph(
+                    risk_profile["sensitivity_analysis"]
+                )
+                response_data["sensitivity"] = SensitivityGraphData(**sensitivity_data)
+                response_data["metadata"]["graph_types_generated"].append("sensitivity")
+
+            elif graph_type == "delta":
+                # Extract current prices from risk profile calculation
+                # We need to recalculate this from positions
+                from src.analysis import data_service
+
+                positions = request_data["positions"]
+                assets = list(set(pos["asset"] for pos in positions))
+                lookback_days = request_data.get("lookback_days", 30)
+
+                # Fetch data to get current prices
+                spot_data, futures_data, lending_data, actual_days = await data_service.fetch_portfolio_data(
+                    assets, lookback_days
+                )
+                daily_spot, daily_futures, daily_lending = data_service.resample_to_daily(
+                    spot_data, futures_data, lending_data
+                )
+                aligned_data, _ = data_service.align_time_series(
+                    daily_spot, daily_futures, daily_lending
+                )
+
+                # Extract current prices
+                current_prices = {}
+                latest_row = aligned_data.iloc[-1]
+                for pos in positions:
+                    asset = pos["asset"]
+                    position_type = pos["position_type"]
+
+                    if position_type in ["lending_supply", "lending_borrow"]:
+                        continue
+
+                    price_key = (asset, position_type)
+                    if position_type == "spot":
+                        col_name = f"{asset}_spot"
+                        if col_name in aligned_data.columns:
+                            current_prices[price_key] = float(latest_row[col_name])
+                    else:
+                        col_name = f"{asset}_futures_mark"
+                        if col_name in aligned_data.columns:
+                            current_prices[price_key] = float(latest_row[col_name])
+
+                delta_data = graph.calculate_delta_gauge(
+                    risk_profile["risk_metrics"]["delta_exposure"],
+                    risk_profile["current_portfolio_value"],
+                    positions,
+                    current_prices,
+                )
+                response_data["delta"] = DeltaGaugeData(**delta_data)
+                response_data["metadata"]["graph_types_generated"].append("delta")
+
+            elif graph_type == "risk_contribution":
+                # Extract asset returns from risk profile calculation
+                # We need to recalculate this
+                from src.analysis import data_service, metrics
+
+                positions = request_data["positions"]
+                assets = list(set(pos["asset"] for pos in positions))
+                lookback_days = request_data.get("lookback_days", 30)
+
+                # Fetch and align data
+                spot_data, futures_data, lending_data, actual_days = await data_service.fetch_portfolio_data(
+                    assets, lookback_days
+                )
+                daily_spot, daily_futures, daily_lending = data_service.resample_to_daily(
+                    spot_data, futures_data, lending_data
+                )
+                aligned_data, _ = data_service.align_time_series(
+                    daily_spot, daily_futures, daily_lending
+                )
+
+                # Calculate asset returns
+                asset_returns = {}
+                for asset in assets:
+                    if f"{asset}_spot" in aligned_data.columns:
+                        prices = aligned_data[f"{asset}_spot"].values
+                    elif f"{asset}_futures_mark" in aligned_data.columns:
+                        prices = aligned_data[f"{asset}_futures_mark"].values
+                    else:
+                        continue
+                    returns = metrics.calculate_returns(prices)
+                    asset_returns[asset] = returns
+
+                # Get positions with values from risk profile
+                from src.analysis import valuation
+
+                current_prices_for_valuation = {}
+                current_indices_for_valuation = {}
+                latest_row = aligned_data.iloc[-1]
+
+                # Check if we have lending positions
+                has_lending = any(p["position_type"] in ["lending_supply", "lending_borrow"] for p in positions)
+
+                for pos in positions:
+                    asset = pos["asset"]
+                    position_type = pos["position_type"]
+
+                    if position_type in ["lending_supply", "lending_borrow"]:
+                        # Extract lending indices
+                        if asset not in current_indices_for_valuation:
+                            current_indices_for_valuation[asset] = {}
+
+                        liquidity_col = f"{asset}_liquidity_index"
+                        if liquidity_col in aligned_data.columns:
+                            current_indices_for_valuation[asset]["liquidity_index"] = float(latest_row[liquidity_col])
+
+                        borrow_col = f"{asset}_variable_borrow_index"
+                        if borrow_col in aligned_data.columns:
+                            current_indices_for_valuation[asset]["variable_borrow_index"] = float(latest_row[borrow_col])
+                        continue
+
+                    price_key = (asset, position_type)
+                    if position_type == "spot":
+                        col_name = f"{asset}_spot"
+                        if col_name in aligned_data.columns:
+                            current_prices_for_valuation[price_key] = float(latest_row[col_name])
+                    else:
+                        col_name = f"{asset}_futures_mark"
+                        if col_name in aligned_data.columns:
+                            current_prices_for_valuation[price_key] = float(latest_row[col_name])
+
+                positions_with_values = []
+                for pos in positions:
+                    pos_copy = pos.copy()
+                    pos_value = valuation.calculate_position_value(
+                        pos,
+                        current_prices_for_valuation,
+                        current_indices_for_valuation if has_lending else None
+                    )
+                    pos_copy["value"] = pos_value
+                    positions_with_values.append(pos_copy)
+
+                risk_contrib_data = graph.calculate_risk_contribution(
+                    positions_with_values,
+                    asset_returns,
+                    risk_profile["risk_metrics"]["correlation_matrix"],
+                    risk_profile["risk_metrics"]["portfolio_variance"],
+                )
+                response_data["risk_contribution"] = RiskContributionData(**risk_contrib_data)
+                response_data["metadata"]["graph_types_generated"].append("risk_contribution")
+
+            elif graph_type == "alerts":
+                # Extract current prices for alerts
+                from src.analysis import data_service
+
+                positions = request_data["positions"]
+                assets = list(set(pos["asset"] for pos in positions))
+                lookback_days = request_data.get("lookback_days", 30)
+
+                spot_data, futures_data, lending_data, actual_days = await data_service.fetch_portfolio_data(
+                    assets, lookback_days
+                )
+                daily_spot, daily_futures, daily_lending = data_service.resample_to_daily(
+                    spot_data, futures_data, lending_data
+                )
+                aligned_data, _ = data_service.align_time_series(
+                    daily_spot, daily_futures, daily_lending
+                )
+
+                current_prices = {}
+                latest_row = aligned_data.iloc[-1]
+                for pos in positions:
+                    asset = pos["asset"]
+                    position_type = pos["position_type"]
+
+                    if position_type in ["lending_supply", "lending_borrow"]:
+                        continue
+
+                    price_key = (asset, position_type)
+                    if position_type == "spot":
+                        col_name = f"{asset}_spot"
+                        if col_name in aligned_data.columns:
+                            current_prices[price_key] = float(latest_row[col_name])
+                    else:
+                        col_name = f"{asset}_futures_mark"
+                        if col_name in aligned_data.columns:
+                            current_prices[price_key] = float(latest_row[col_name])
+
+                alert_data = graph.calculate_alert_dashboard(
+                    risk_profile["risk_metrics"],
+                    risk_profile["current_portfolio_value"],
+                    positions,
+                    current_prices,
+                    risk_profile["risk_metrics"]["delta_exposure"],
+                )
+                response_data["alerts"] = AlertDashboardData(**alert_data)
+                response_data["metadata"]["graph_types_generated"].append("alerts")
+
+            elif graph_type in ["funding_waterfall", "rolling_metrics", "monte_carlo"]:
+                logger.warning(f"Graph type '{graph_type}' not yet implemented (Phase 2)")
+                # Phase 2 graphs remain None
+
+        logger.info(
+            f"Graph data generated: {len(response_data['metadata']['graph_types_generated'])} types"
+        )
+
+        return GraphResponse(**response_data)
+
+    except ValueError as e:
+        logger.warning(f"Invalid graph request: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Graph calculation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Graph calculation failed: {str(e)}",
         )
