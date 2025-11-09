@@ -14,7 +14,7 @@ COMMON_API_KNOWLEDGE = """
 - History: ~730 days (spot), ~30 days (futures) ⚠️
 
 ### Stablecoins (Spot/Futures)
-**USDC, USDT** - Treat as $1.00 USD for calculations
+**USDC, USDT** - Treat as $$1.00 USD for calculations
 - ⚠️ Not available via get_aggregated_stats endpoint
 - For spot positions: Use entry_price = 1.0
 - For futures: Not recommended (minimal volatility/returns)
@@ -57,7 +57,7 @@ When calling calculate_risk_profile or set_portfolio, each position MUST have:
 
 ### Asset Validation
 - Spot/Futures (for get_aggregated_stats): MUST be in [BTC, ETH, SOL, BNB, XRP, ADA, LINK]
-- Spot (for positions): Can also use USDC, USDT (treat as $1.00 USD, no data fetch needed)
+- Spot (for positions): Can also use USDC, USDT (treat as $$1.00 USD, no data fetch needed)
 - Lending: MUST be in [WETH, WBTC, USDC, USDT, DAI] or auto-mapped [ETH, BTC]
 - ⚠️ DO NOT call get_aggregated_stats for USDC, USDT, DAI - they're not supported
 
@@ -78,14 +78,14 @@ When calling calculate_risk_profile or set_portfolio, each position MUST have:
 User: "2 BTC and 10 ETH"
 → position_type: "spot" (no leverage mentioned)
 
-User: "3x long on 5 ETH at $2500"
+User: "3x long on 5 ETH at $$2500"
 → position_type: "futures_long", leverage: 3.0, entry_price: 2500.0
 
 User: "Short 100 SOL with 5x leverage"
 → position_type: "futures_short", leverage: 5.0
 
 User: "10,000 USDT"
-→ position_type: "spot", asset: "USDT", entry_price: 1.0 (treat as $1 USD)
+→ position_type: "spot", asset: "USDT", entry_price: 1.0 (treat as $$1 USD)
 → DO NOT call get_aggregated_stats for USDT
 
 User: "I want passive income from stablecoins"
@@ -107,7 +107,7 @@ User: "Last month's data for BTC"
 
 ❌ Using "long" instead of "futures_long"
 ❌ Using "DOGE" or other non-tracked assets
-❌ Calling get_aggregated_stats for USDC, USDT, or DAI (not supported - use $1 price)
+❌ Calling get_aggregated_stats for USDC, USDT, or DAI (not supported - use $$1 price)
 ❌ Forgetting entry_timestamp for lending positions
 ❌ Using lending_borrow for passive/conservative strategies (too risky)
 ❌ Requesting >30 day lookback when portfolio has futures
@@ -165,7 +165,7 @@ User: "Last month's data for BTC"
 1. **Before get_aggregated_stats**:
    - Validate assets against available list
    - DO NOT call for USDC, USDT, DAI only (they're not in aggregated-stats)
-   - For stablecoins: Assume $1.00 price, no need to fetch data
+   - For stablecoins: Assume $$1.00 price, no need to fetch data
    - Date range: No maximum limit, but be aware very long ranges may take longer to process
 2. **Before calculate_risk_profile**:
    - Validate all position fields
@@ -304,16 +304,16 @@ Help users build risk-based portfolios (NO price prediction) through a systemati
    - Portfolio E (optional): Creative or specialized strategy
 
 3. **Position Design**:
-   - **Default Portfolio Budget**: Assume $100,000 USD total portfolio value unless user specifies otherwise
-   - Use realistic quantities based on this budget (allocate the full $100,000 across positions according to weights)
+   - **Default Portfolio Budget**: Assume $$100,000 USD total portfolio value unless user specifies otherwise
+   - Use realistic quantities based on this budget (allocate the full $$100,000 across positions according to weights)
    - Set appropriate leverage (1x for spot, 2-5x for conservative futures, up to 10-20x for aggressive)
    - For lending positions: Set realistic entry_timestamp (recent dates)
    - Consider position sizing to manage concentration risk
 
    **Example Calculation**:
-   - If BTC allocation is 40% of portfolio → $40,000 / current_btc_price = quantity
+   - If BTC allocation is 40% of portfolio → $$40,000 / current_btc_price = quantity
    - If USDC lending is 30% → quantity = 30,000 USDC
-   - Ensure all position values sum to approximately $100,000
+   - Ensure all position values sum to approximately $$100,000
 
 **Output to User**: NOT YET - Hold these candidates internally for now
 
