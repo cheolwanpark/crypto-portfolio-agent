@@ -13,8 +13,8 @@ const _geistMono = V0_Font_Geist_Mono({ subsets: ['latin'], weight: ["100","200"
 
 const _geistSans = Geist({ subsets: ["latin"] })
 export const metadata: Metadata = {
-  title: "v0 App",
-  description: "Created with v0",
+  title: "LowerBound",
+  description: "AI-powered crypto portfolio management platform",
   generator: "v0.app",
   icons: {
     icon: [

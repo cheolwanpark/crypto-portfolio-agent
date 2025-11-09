@@ -24,7 +24,7 @@ export function DeltaGauge({ data }: { data: DeltaGaugeData }) {
 
   return (
     <div className="rounded-xl border bg-card p-6">
-      <h3 className="text-lg font-semibold mb-4">Delta Gauge</h3>
+      <h3 className="text-lg font-semibold mb-4 text-white">Delta Gauge</h3>
       <ResponsiveContainer width="100%" height={200}>
         <PieChart>
           <Pie

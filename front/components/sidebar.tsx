@@ -68,7 +68,7 @@ export function Sidebar({
           <div className="flex items-center gap-2">
             <Sparkles className="h-6 w-6 text-sidebar-primary" />
             <span className="text-lg font-semibold text-sidebar-foreground whitespace-nowrap">
-              Crypto Agent
+              LowerBound
             </span>
           </div>
         )}

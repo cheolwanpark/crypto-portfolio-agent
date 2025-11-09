@@ -57,7 +57,7 @@ export function AlertCards({ data }: { data: AlertDashboardData }) {
       {/* Liquidation Risk Card */}
       <div className="rounded-xl border bg-card p-6">
         <div className="flex items-center justify-between">
-          <h4 className="text-sm font-semibold">Liquidation Risk</h4>
+          <h4 className="text-sm font-semibold text-white">Liquidation Risk</h4>
           <AlertTriangle className="h-5 w-5" />
         </div>
         <div
@@ -83,7 +83,7 @@ export function AlertCards({ data }: { data: AlertDashboardData }) {
       {/* Rebalancing Card */}
       <div className="rounded-xl border bg-card p-6">
         <div className="flex items-center justify-between">
-          <h4 className="text-sm font-semibold">Rebalancing</h4>
+          <h4 className="text-sm font-semibold text-white">Rebalancing</h4>
           <RefreshCw className="h-5 w-5" />
         </div>
         <div
@@ -105,7 +105,7 @@ export function AlertCards({ data }: { data: AlertDashboardData }) {
       {/* Performance Metrics Placeholder */}
       <div className="rounded-xl border bg-card p-6">
         <div className="flex items-center justify-between">
-          <h4 className="text-sm font-semibold">Performance</h4>
+          <h4 className="text-sm font-semibold text-white">Performance</h4>
           <TrendingUp className="h-5 w-5" />
         </div>
         <div className="mt-2 text-2xl font-bold text-muted-foreground">

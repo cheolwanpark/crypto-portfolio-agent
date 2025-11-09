@@ -18,8 +18,8 @@ const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
 })
 export const metadata: Metadata = {
-  title: "v0 App",
-  description: "Created with v0",
+  title: "LowerBound",
+  description: "AI-powered crypto portfolio management platform",
   generator: "v0.app",
   icons: {
     icon: [

@@ -19,7 +19,7 @@ export function Dashboard({ projectId }: DashboardProps) {
       <div className="mx-auto max-w-7xl space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">Portfolio Analytics</h1>
+          <h1 className="text-2xl font-semibold text-white">Portfolio Analytics</h1>
           <Select value={selectedVersion} onValueChange={setSelectedVersion}>
             <SelectTrigger className="w-32">
               <SelectValue />
@@ -39,7 +39,7 @@ export function Dashboard({ projectId }: DashboardProps) {
           {/* Pie Chart */}
           <Card>
             <CardHeader>
-              <CardTitle>Asset Allocation</CardTitle>
+              <CardTitle className="text-white">Asset Allocation</CardTitle>
               <CardDescription>Current portfolio distribution</CardDescription>
             </CardHeader>
             <CardContent>
@@ -50,7 +50,7 @@ export function Dashboard({ projectId }: DashboardProps) {
           {/* Bar Chart */}
           <Card>
             <CardHeader>
-              <CardTitle>Risk vs Expected Return</CardTitle>
+              <CardTitle className="text-white">Risk vs Expected Return</CardTitle>
               <CardDescription>Comparison by asset</CardDescription>
             </CardHeader>
             <CardContent>
@@ -61,7 +61,7 @@ export function Dashboard({ projectId }: DashboardProps) {
           {/* Line Chart - Full Width */}
           <Card className="lg:col-span-2">
             <CardHeader>
-              <CardTitle>Historical Performance</CardTitle>
+              <CardTitle className="text-white">Historical Performance</CardTitle>
               <CardDescription>Portfolio value and drawdown over time</CardDescription>
             </CardHeader>
             <CardContent>

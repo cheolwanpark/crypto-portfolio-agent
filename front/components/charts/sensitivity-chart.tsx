@@ -15,7 +15,7 @@ import type { SensitivityGraphData } from "@/lib/types"
 export function SensitivityChart({ data }: { data: SensitivityGraphData }) {
   return (
     <div className="rounded-xl border bg-card p-6">
-      <h3 className="text-lg font-semibold mb-4">
+      <h3 className="text-lg font-semibold mb-4 text-white">
         Portfolio Value Sensitivity
       </h3>
       <ResponsiveContainer width="100%" height={300}>

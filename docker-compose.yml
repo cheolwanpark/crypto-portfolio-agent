@@ -125,6 +125,22 @@ services:
     deploy:
       replicas: 3
 
+  # Frontend Service
+  frontend:
+    build:
+      context: ./front
+      dockerfile: Dockerfile
+    container_name: crypto-portfolio-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8001
+      - NEXT_PUBLIC_DATA_API_URL=http://localhost:8000
+    depends_on:
+      - api
+      - agent-api
+    restart: unless-stopped
+
 volumes:
   pgdata:
     name: crypto-portfolio-pgdata

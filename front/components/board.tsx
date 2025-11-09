@@ -97,7 +97,7 @@ export function Board({ chatId, version, viewMode, onViewModeChange, selectedVer
           <div className="space-y-6 p-6">
             {/* Header Info */}
             <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-semibold">
+              <h2 className="text-2xl font-semibold text-white">
                 Portfolio Risk Dashboard
                 {version !== undefined && ` - Version ${version}`}
               </h2>

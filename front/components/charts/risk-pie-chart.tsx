@@ -21,7 +21,7 @@ export function RiskPieChart({ data }: { data: RiskContributionData }) {
 
   return (
     <div className="rounded-xl border bg-card p-6">
-      <h3 className="text-lg font-semibold mb-4">Risk Contribution</h3>
+      <h3 className="text-lg font-semibold mb-4 text-white">Risk Contribution</h3>
       <ResponsiveContainer width="100%" height={250}>
         <PieChart>
           <Pie
