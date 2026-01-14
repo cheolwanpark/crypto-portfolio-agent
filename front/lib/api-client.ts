@@ -9,25 +9,11 @@ import type {
   GraphResponse,
 } from "./types"
 
-// Get Agent API URL from environment variable, default to localhost:8001
-const getApiUrl = () => {
-  if (typeof window === "undefined") {
-    // Server-side: use environment variable or default
-    return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001"
-  }
-  // Client-side: use environment variable or default
-  return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001"
-}
+// Get Agent API URL - proxied through Next.js API routes
+const getApiUrl = () => "/api"
 
-// Get Data API URL from environment variable, default to localhost:8000
-const getDataApiUrl = () => {
-  if (typeof window === "undefined") {
-    // Server-side: use environment variable or default
-    return process.env.NEXT_PUBLIC_DATA_API_URL || "http://localhost:8000"
-  }
-  // Client-side: use environment variable or default
-  return process.env.NEXT_PUBLIC_DATA_API_URL || "http://localhost:8000"
-}
+// Get Data API URL - proxied through Next.js API routes
+const getDataApiUrl = () => "/api/data"
 
 // ============================================================================
 // Error Handling
@@ -210,7 +196,7 @@ export async function fetchGraph(
     ...(pos.borrow_type && { borrow_type: pos.borrow_type }),
   }))
 
-  const response = await fetch(`${apiUrl}/api/v1/analysis/graph`, {
+  const response = await fetch(`${apiUrl}/analysis/graph`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

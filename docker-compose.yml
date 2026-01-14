@@ -1,31 +1,27 @@
+x-agent-env: &agent-env
+  BACKEND_API_URL: ${BACKEND_API_URL:-http://api:8000}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  QUEUE_NAME: ${QUEUE_NAME:-chat-agent}
+  MAX_WORKERS: ${MAX_WORKERS:-10}
+
 services:
-  # PostgreSQL Database
   postgres:
     image: postgres:16-alpine
-    container_name: crypto-portfolio-db
     environment:
       POSTGRES_USER: crypto
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
       POSTGRES_DB: portfolio
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U crypto -d portfolio"]
+      test: ["CMD-SHELL", "pg_isready -U crypto"]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
 
-  # Redis (for agent queue)
   redis:
     image: redis:7-alpine
-    container_name: crypto-agent-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
+    volumes: [redis_data:/data]
     command: redis-server --appendonly yes
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -34,114 +30,58 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # Backend API Service
   api:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: crypto-portfolio-api
+    build: ./backend
     command: uvicorn src.server:app --host 0.0.0.0 --port 8000
-    env_file:
-      - .env
+    env_file: .env
     environment:
-      DATABASE_URL: postgresql://crypto:password@postgres:5432/portfolio
-    ports:
-      - "8000:8000"
+      DATABASE_URL: postgresql://crypto:${POSTGRES_PASSWORD:-password}@postgres:5432/portfolio
     depends_on:
-      postgres:
-        condition: service_healthy
+      postgres: { condition: service_healthy }
     restart: unless-stopped
-    volumes:
-      - ./backend/src:/app/src  # Hot reload for development (remove in production)
 
-  # Scheduler Service (separate container)
   scheduler:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: crypto-portfolio-scheduler
+    build: ./backend
     command: python -m src.scheduler
-    env_file:
-      - .env
+    env_file: .env
     environment:
-      DATABASE_URL: postgresql://crypto:password@postgres:5432/portfolio
+      DATABASE_URL: postgresql://crypto:${POSTGRES_PASSWORD:-password}@postgres:5432/portfolio
     depends_on:
-      postgres:
-        condition: service_healthy
+      postgres: { condition: service_healthy }
     restart: unless-stopped
-    volumes:
-      - ./backend/src:/app/src  # Hot reload for development (remove in production)
 
-  # Agent API Service
   agent-api:
-    build:
-      context: ./agent
-      dockerfile: Dockerfile
-    container_name: crypto-agent-api
+    build: ./agent
     command: uvicorn src.server:app --host 0.0.0.0 --port 8001
-    ports:
-      - "8001:8001"
+    env_file: .env
     environment:
-      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
-      - BACKEND_API_URL=${BACKEND_API_URL:-http://api:8000}
-      - BACKEND_API_KEY=${BACKEND_API_KEY}
-      - REDIS_URL=redis://redis:6379/0
-      - QUEUE_NAME=chat-agent
-      - MAX_WORKERS=10
-      - AGENT_MAX_TURNS=15
-      - AGENT_TIMEOUT_SECONDS=${AGENT_TIMEOUT_SECONDS:-600}
-      - AGENT_MAX_TOOL_CALLS=30
-      - LOG_LEVEL=INFO
+      <<: *agent-env
     depends_on:
-      redis:
-        condition: service_healthy
-      api:
-        condition: service_started
+      redis: { condition: service_healthy }
+      api: { condition: service_started }
     restart: unless-stopped
 
-  # Agent Worker Service
   agent-worker:
-    build:
-      context: ./agent
-      dockerfile: Dockerfile
+    build: ./agent
     command: rq worker chat-agent --with-scheduler
+    env_file: .env
     environment:
-      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
-      - BACKEND_API_URL=${BACKEND_API_URL:-http://api:8000}
-      - BACKEND_API_KEY=${BACKEND_API_KEY}
-      - REDIS_URL=redis://redis:6379/0
-      - QUEUE_NAME=chat-agent
-      - MAX_WORKERS=10
-      - AGENT_MAX_TURNS=15
-      - AGENT_TIMEOUT_SECONDS=${AGENT_TIMEOUT_SECONDS:-600}
-      - AGENT_MAX_TOOL_CALLS=30
-      - LOG_LEVEL=INFO
+      <<: *agent-env
     depends_on:
-      redis:
-        condition: service_healthy
-      api:
-        condition: service_started
+      redis: { condition: service_healthy }
+      api: { condition: service_started }
     restart: unless-stopped
-    deploy:
-      replicas: 3
+    # Scale with: docker compose up --scale agent-worker=3
 
-  # Frontend Service
   frontend:
-    build:
-      context: ./front
-      dockerfile: Dockerfile
-    container_name: crypto-portfolio-frontend
-    ports:
-      - "3000:3000"
+    build: ./front
+    ports: ["3000:3000"]
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8001
-      - NEXT_PUBLIC_DATA_API_URL=http://localhost:8000
-    depends_on:
-      - api
-      - agent-api
+      AGENT_API_URL: http://agent-api:8001
+      DATA_API_URL: http://api:8000
+    depends_on: [api, agent-api]
     restart: unless-stopped
 
 volumes:
   pgdata:
-    name: crypto-portfolio-pgdata
   redis_data:
